@@ -1,0 +1,2386 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <title>NovaOS — Mobile Operating System Simulator</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', 'sans-serif'],
+            mono: ['JetBrains Mono', 'monospace'],
+          },
+          colors: {
+            nova: {
+              blue: '#3B82F6',
+              accent: '#60A5FA',
+              surface: '#0B0F17',
+              card: '#131926',
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    * {
+      box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
+      user-select: none;
+    }
+    input, textarea {
+      user-select: text;
+    }
+    body, html {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background-color: #05070B;
+      font-family: 'Inter', sans-serif;
+    }
+    .no-scrollbar::-webkit-scrollbar {
+      display: none;
+    }
+    .no-scrollbar {
+      -ms-overflow-style: none;
+      scrollbar-width: none;
+    }
+    input[type="range"] {
+      -webkit-appearance: none;
+      background: transparent;
+    }
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      height: 0;
+      width: 0;
+    }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "react": "https://esm.sh/react@18.3.1",
+        "react-dom/client": "https://esm.sh/react-dom@18.3.1/client",
+        "framer-motion": "https://esm.sh/framer-motion@11.3.28?deps=react@18.3.1",
+        "lucide-react": "https://esm.sh/lucide-react@0.427.0?deps=react@18.3.1"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="module">
+    import React, { useState, useEffect, useRef, useCallback } from 'react';
+    import { createRoot } from 'react-dom/client';
+    import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
+    import * as Lucide from 'lucide-react';
+
+    const h = React.createElement;
+
+    // =========================================================================
+    // ERROR BOUNDARY (PREVENTS FULL-SCREEN BLACKOUTS)
+    // =========================================================================
+    class ErrorBoundary extends React.Component {
+      constructor(props) {
+        super(props);
+        this.state = { hasError: false, message: '' };
+      }
+      static getDerivedStateFromError(error) {
+        return { hasError: true, message: error?.message || 'Unexpected rendering error' };
+      }
+      render() {
+        if (this.state.hasError) {
+          return h('div', { className: 'h-full w-full bg-[#0B0F17] text-white flex flex-col items-center justify-center p-6 text-center gap-3' },
+            h('div', { className: 'text-sm font-semibold text-blue-400' }, 'NovaOS Recovery'),
+            h('p', { className: 'text-xs text-slate-400 max-w-[260px]' }, this.state.message),
+            h('button', {
+              type: 'button',
+              onClick: () => {
+                this.setState({ hasError: false, message: '' });
+                if (this.props.onReset) this.props.onReset();
+              },
+              className: 'px-4 py-2 rounded-xl bg-blue-600 text-white text-xs font-semibold'
+            }, 'Reload View')
+          );
+        }
+        return this.props.children;
+      }
+    }
+
+    // =========================================================================
+    // 1. SYSTEM CONSTANTS & WALLPAPER HELPERS (DARK + LIGHT VARIANTS)
+    // =========================================================================
+    const PRESET_WALLPAPERS = [
+      {
+        id: 'obsidian-horizon',
+        name: 'Horizon',
+        type: 'css',
+        darkValue: 'radial-gradient(circle at 20% 20%, #172554 0%, #090D16 45%, #030508 100%)',
+        lightValue: 'radial-gradient(circle at 20% 20%, #BFDBFE 0%, #EFF6FF 50%, #DBEAFE 100%)',
+        accent: '#3B82F6'
+      },
+      {
+        id: 'arctic-slate',
+        name: 'Slate',
+        type: 'css',
+        darkValue: 'linear-gradient(155deg, #0F172A 0%, #1E293B 48%, #090D16 100%)',
+        lightValue: 'linear-gradient(155deg, #F8FAFC 0%, #E2E8F0 52%, #CBD5E1 100%)',
+        accent: '#2563EB'
+      },
+      {
+        id: 'midnight-cobalt',
+        name: 'Cobalt',
+        type: 'css',
+        darkValue: 'radial-gradient(ellipse at 80% 10%, #1D4ED8 0%, #0F172A 40%, #050811 100%)',
+        lightValue: 'radial-gradient(ellipse at 80% 10%, #93C5FD 0%, #F0F9FF 48%, #E0F2FE 100%)',
+        accent: '#0284C7'
+      },
+      {
+        id: 'titanium-mist',
+        name: 'Mist',
+        type: 'css',
+        darkValue: 'linear-gradient(160deg, #1E293B 0%, #0F172A 55%, #020617 100%)',
+        lightValue: 'linear-gradient(160deg, #FFFFFF 0%, #F1F5F9 55%, #E2E8F0 100%)',
+        accent: '#3B82F6'
+      }
+    ];
+
+    function resolveWallpaper(wpId, customWallpapers) {
+      const custom = customWallpapers.find(w => w.id === wpId);
+      if (custom) return custom;
+      return PRESET_WALLPAPERS.find(w => w.id === wpId) || PRESET_WALLPAPERS[0];
+    }
+
+    function getWallpaperSurfaceStyle(wp, isDark = true) {
+      if (!wp) return {};
+      if (wp.type === 'image') {
+        return {
+          backgroundImage: `url("${wp.value}")`,
+          backgroundSize: 'cover',
+          backgroundPosition: 'center',
+          backgroundRepeat: 'no-repeat'
+        };
+      }
+      return { background: isDark ? wp.darkValue : wp.lightValue };
+    }
+
+    const APPS_CONFIG = [
+      { id: 'nova-ai', name: 'Nova AI', icon: 'Sparkles', bg: 'from-blue-600 to-indigo-900', dock: true },
+      { id: 'phone', name: 'Phone', icon: 'Phone', bg: 'from-emerald-500 to-teal-700', dock: true },
+      { id: 'messages', name: 'Messages', icon: 'MessageSquare', bg: 'from-sky-500 to-blue-700', dock: true },
+      { id: 'browser', name: 'Browser', icon: 'Compass', bg: 'from-blue-500 to-cyan-700', dock: true },
+      { id: 'settings', name: 'Settings', icon: 'Settings', bg: 'from-slate-600 to-slate-800', dock: false },
+      { id: 'camera', name: 'Camera', icon: 'Camera', bg: 'from-zinc-700 to-neutral-900', dock: false },
+      { id: 'photos', name: 'Photos', icon: 'Image', bg: 'from-amber-500 to-orange-600', dock: false },
+      { id: 'clock', name: 'Clock', icon: 'Clock', bg: 'from-slate-800 to-black', dock: false },
+      { id: 'calendar', name: 'Calendar', icon: 'Calendar', bg: 'from-rose-500 to-red-700', dock: false },
+      { id: 'calculator', name: 'Calculator', icon: 'Calculator', bg: 'from-neutral-700 to-stone-900', dock: false },
+      { id: 'weather', name: 'Weather', icon: 'CloudSun', bg: 'from-blue-400 to-indigo-600', dock: false },
+      { id: 'notes', name: 'Notes', icon: 'FileText', bg: 'from-amber-400 to-yellow-600', dock: false },
+      { id: 'music', name: 'Music', icon: 'Music', bg: 'from-indigo-500 to-purple-700', dock: false },
+      { id: 'files', name: 'Files', icon: 'Folder', bg: 'from-blue-600 to-slate-800', dock: false },
+    ];
+
+    const SPRING_TRANSITION = { type: 'spring', stiffness: 380, damping: 32, mass: 0.9 };
+    const FAST_SPRING = { type: 'spring', stiffness: 500, damping: 35 };
+    const SAMSUNG_UNLOCK_SPRING = { type: 'spring', stiffness: 290, damping: 28, mass: 0.95 };
+
+    // =========================================================================
+    // 2. PERSISTENT STORAGE HOOK
+    // =========================================================================
+    function usePersistentState(key, defaultValue) {
+      const [state, setState] = useState(() => {
+        try {
+          const item = localStorage.getItem(`novaos_${key}`);
+          if (item) return JSON.parse(item);
+          return typeof defaultValue === 'function' ? defaultValue() : defaultValue;
+        } catch {
+          return typeof defaultValue === 'function' ? defaultValue() : defaultValue;
+        }
+      });
+
+      useEffect(() => {
+        try {
+          localStorage.setItem(`novaos_${key}`, JSON.stringify(state));
+        } catch (e) {
+          console.warn('Storage quota exceeded', e);
+        }
+      }, [key, state]);
+
+      return [state, setState];
+    }
+
+    // =========================================================================
+    // 3. CUSTOM VIRTUAL KEYBOARD (SYSTEM-WIDE ACROSS ALL APPS)
+    // =========================================================================
+    const KEYBOARD_ROWS = [
+      ['Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P'],
+      ['A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L'],
+      ['SHIFT', 'Z', 'X', 'C', 'V', 'B', 'N', 'M', 'BACK'],
+      ['123', 'SPACE', 'RETURN']
+    ];
+
+    const NUM_ROWS = [
+      ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'],
+      ['-', '/', ':', ';', '(', ')', '$', '&', '@', '"'],
+      ['ABC', '.', ',', '?', '!', "'", 'BACK'],
+      ['ABC', 'SPACE', 'RETURN']
+    ];
+
+    function NovaVirtualKeyboard({ isDark, onKeyPress, onBackspace, onSubmit, onHide }) {
+      const [shifted, setShifted] = useState(true);
+      const [numeric, setNumeric] = useState(false);
+
+      const rows = numeric ? NUM_ROWS : KEYBOARD_ROWS;
+
+      const handleKey = (k) => {
+        if (k === 'SHIFT') {
+          setShifted(s => !s);
+        } else if (k === '123') {
+          setNumeric(true);
+        } else if (k === 'ABC') {
+          setNumeric(false);
+        } else if (k === 'BACK') {
+          onBackspace();
+        } else if (k === 'SPACE') {
+          onKeyPress(' ');
+        } else if (k === 'RETURN') {
+          if (onSubmit) onSubmit();
+          else onKeyPress('\n');
+        } else {
+          const char = (!numeric && shifted) ? k.toUpperCase() : k.toLowerCase();
+          onKeyPress(char);
+          if (!numeric && shifted) setShifted(false);
+        }
+      };
+
+      return h(motion.div, {
+        initial: { y: '100%' },
+        animate: { y: 0 },
+        exit: { y: '100%' },
+        transition: SPRING_TRANSITION,
+        className: `w-full backdrop-blur-xl border-t px-1.5 pt-1.5 pb-1 select-none shrink-0 z-30 ${
+          isDark
+            ? 'bg-[#090D16]/95 border-blue-500/20 text-white'
+            : 'bg-slate-200/95 border-slate-300 text-slate-900'
+        }`
+      },
+        onHide && h('div', { className: 'flex justify-between items-center px-2 pb-1 text-[10px] opacity-60' },
+          h('span', { className: 'font-mono text-blue-500 font-semibold' }, 'NOVA KEYBOARD'),
+          h('button', { type: 'button', onClick: onHide, className: 'flex items-center gap-0.5 hover:opacity-100' },
+            h(Lucide.ChevronDown, { size: 13 }), 'Hide'
+          )
+        ),
+        rows.map((row, rIdx) =>
+          h('div', { key: rIdx, className: 'flex justify-center gap-1 mb-1' },
+            row.map((key) => {
+              const isSpecial = ['SHIFT', 'BACK', '123', 'ABC', 'RETURN'].includes(key);
+              const isSpace = key === 'SPACE';
+              return h(motion.button, {
+                key,
+                type: 'button',
+                whileTap: { scale: 0.92 },
+                onClick: () => handleKey(key),
+                className: `h-8 rounded-lg text-[12px] font-medium flex items-center justify-center transition-colors ${
+                  isSpace
+                    ? (isDark ? 'flex-1 max-w-[165px] bg-slate-800/90 text-slate-200 border border-white/10' : 'flex-1 max-w-[165px] bg-white text-slate-800 border border-slate-300 shadow-2xs')
+                    : key === 'RETURN'
+                      ? 'px-3 bg-blue-600 text-white font-semibold shadow-sm shadow-blue-500/30'
+                      : isSpecial
+                        ? (isDark ? 'px-2 bg-slate-800/80 text-blue-400 border border-blue-500/20' : 'px-2 bg-slate-300/90 text-blue-700 border border-slate-400/40')
+                        : (isDark ? 'flex-1 max-w-[33px] bg-slate-900/90 text-white border border-white/10' : 'flex-1 max-w-[33px] bg-white text-slate-900 border border-slate-300 shadow-2xs')
+                }`
+              },
+                key === 'BACK' ? h(Lucide.Delete, { size: 14 }) :
+                key === 'SHIFT' ? h(Lucide.ArrowUp, { size: 14, className: shifted ? 'text-blue-500' : 'opacity-45' }) :
+                key === 'SPACE' ? 'space' :
+                key === 'RETURN' ? (onSubmit ? 'Send' : '↵') :
+                (!numeric && shifted ? key.toUpperCase() : key.toLowerCase())
+              );
+            })
+          )
+        )
+      );
+    }
+
+    // =========================================================================
+    // 4. CUSTOM APP ICON COMPONENT
+    // =========================================================================
+    function AppIcon({ app, onOpen, size = 'md', showLabel = true, isDark = true }) {
+      const IconComp = Lucide[app.icon] || Lucide.Box;
+      const dims = size === 'sm' ? 'w-11 h-11 rounded-[13px]' : 'w-[58px] h-[58px] rounded-[17px]';
+      const iconSize = size === 'sm' ? 20 : 26;
+
+      return h(motion.button, {
+        whileHover: { scale: 1.05 },
+        whileTap: { scale: 0.9 },
+        transition: FAST_SPRING,
+        onClick: () => onOpen(app.id),
+        className: 'flex flex-col items-center gap-1.5 group focus:outline-none'
+      },
+        h('div', {
+          className: `${dims} bg-gradient-to-br ${app.bg} relative flex items-center justify-center shadow-lg shadow-black/25 border border-white/20 overflow-hidden`
+        },
+          h('div', { className: 'absolute inset-0 bg-gradient-to-b from-white/25 to-transparent opacity-60 pointer-events-none' }),
+          app.id === 'nova-ai' && h('div', { className: 'absolute inset-0 ring-1 ring-inset ring-blue-300/60 rounded-[17px]' }),
+          h(IconComp, { size: iconSize, className: 'text-white relative z-10 drop-shadow-sm', strokeWidth: 1.8 })
+        ),
+        showLabel && h('span', {
+          className: `text-[11px] font-medium tracking-tight truncate max-w-[66px] ${
+            isDark
+              ? 'text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.9)]'
+              : 'text-slate-900 drop-shadow-[0_1px_2px_rgba(255,255,255,0.85)]'
+          }`
+        }, app.name)
+      );
+    }
+
+    // =========================================================================
+    // 5. STATUS BAR COMPONENT
+    // =========================================================================
+    function StatusBar({ timeStr, battery, isDark, onOpenControlCenter, powerState }) {
+      const textColor = powerState === 'aod'
+        ? 'text-neutral-500'
+        : (isDark || powerState === 'locked' ? 'text-white' : 'text-slate-900');
+
+      return h('div', {
+        onClick: () => powerState === 'unlocked' && onOpenControlCenter(),
+        style: { paddingTop: 'max(10px, env(safe-area-inset-top))' },
+        className: `w-full px-5 pb-2 flex items-center justify-between text-[13px] font-semibold tracking-tight z-40 cursor-pointer select-none transition-colors duration-300 ${textColor}`
+      },
+        h('div', { className: 'flex items-center gap-1.5' },
+          h('span', null, timeStr)
+        ),
+        h('div', { className: 'flex items-center gap-1.5' },
+          h('span', { className: 'text-[11px] font-medium opacity-90' }, `${battery}%`),
+          h('div', { className: 'relative flex items-center' },
+            h('div', {
+              className: `w-[23px] h-[11.5px] rounded-[3.5px] border p-[1.5px] flex items-center ${
+                powerState === 'aod' ? 'border-neutral-600' : (isDark || powerState === 'locked' ? 'border-white/75' : 'border-slate-900/75')
+              }`
+            },
+              h('div', {
+                style: { width: `${battery}%` },
+                className: `h-full rounded-[1.5px] transition-all duration-500 ${
+                  battery <= 20 ? 'bg-red-500' : (powerState === 'aod' ? 'bg-neutral-500' : (isDark || powerState === 'locked' ? 'bg-white' : 'bg-slate-900'))
+                }`
+              })
+            ),
+            h('div', {
+              className: `w-[1.5px] h-[4px] rounded-r-full ml-[1px] ${
+                powerState === 'aod' ? 'bg-neutral-600' : (isDark || powerState === 'locked' ? 'bg-white/75' : 'bg-slate-900/75')
+              }`
+            })
+          )
+        )
+      );
+    }
+
+    // =========================================================================
+    // 6. HOME BAR WITH 3-GESTURE ENGINE
+    // =========================================================================
+    function HomeBar({ activeApp, onSingleTap, onDoubleTap, onLongPress, isDark }) {
+      const [expanded, setExpanded] = useState(false);
+      const tapCountRef = useRef(0);
+      const singleTapTimerRef = useRef(null);
+      const longPressTimerRef = useRef(null);
+      const longPressTriggeredRef = useRef(false);
+
+      const handlePointerDown = (e) => {
+        e.stopPropagation();
+        longPressTriggeredRef.current = false;
+
+        longPressTimerRef.current = setTimeout(() => {
+          longPressTriggeredRef.current = true;
+          tapCountRef.current = 0;
+          if (singleTapTimerRef.current) clearTimeout(singleTapTimerRef.current);
+          onLongPress();
+        }, 420);
+      };
+
+      const handlePointerUp = (e) => {
+        e.stopPropagation();
+        if (longPressTimerRef.current) {
+          clearTimeout(longPressTimerRef.current);
+          longPressTimerRef.current = null;
+        }
+
+        if (longPressTriggeredRef.current) return;
+
+        tapCountRef.current += 1;
+
+        if (tapCountRef.current === 1) {
+          singleTapTimerRef.current = setTimeout(() => {
+            tapCountRef.current = 0;
+            if (!activeApp) {
+              setExpanded(true);
+              setTimeout(() => setExpanded(false), 450);
+            }
+            onSingleTap();
+          }, 250);
+        } else if (tapCountRef.current >= 2) {
+          if (singleTapTimerRef.current) clearTimeout(singleTapTimerRef.current);
+          tapCountRef.current = 0;
+          onDoubleTap();
+        }
+      };
+
+      const handlePointerCancel = () => {
+        if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
+      };
+
+      return h('div', {
+        style: { paddingBottom: 'max(8px, env(safe-area-inset-bottom))' },
+        className: 'w-full pt-2 flex flex-col items-center justify-end z-50 relative shrink-0'
+      },
+        h('div', {
+          onPointerDown: handlePointerDown,
+          onPointerUp: handlePointerUp,
+          onPointerCancel: handlePointerCancel,
+          title: 'Tap: Home • Double Tap: Nova AI • Hold: Multitasking',
+          className: 'px-8 py-2 cursor-pointer flex items-center justify-center group'
+        },
+          h(motion.div, {
+            animate: {
+              width: expanded ? 150 : 112,
+              backgroundColor: expanded
+                ? '#3B82F6'
+                : (isDark ? 'rgba(255, 255, 255, 0.85)' : 'rgba(15, 23, 42, 0.75)'),
+              boxShadow: expanded ? '0 0 14px rgba(59, 130, 246, 0.85)' : '0 0 0px rgba(59, 130, 246, 0)'
+            },
+            transition: { type: 'spring', stiffness: 450, damping: 28 },
+            className: 'h-[4px] rounded-full'
+          })
+        )
+      );
+    }
+
+    // =========================================================================
+    // 7. NOVA AI ASSISTANT (MULTI-CHAT + NEW CHAT ON LAUNCH + PRESS & HOLD DELETE)
+    // =========================================================================
+    function createFreshNovaChat() {
+      return {
+        id: `chat-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        title: 'New Chat',
+        createdAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        messages: [
+          {
+            id: `init-${Date.now()}`,
+            role: 'assistant',
+            text: 'Nova AI ready in Demo Mode. Ask anything or command system settings.'
+          }
+        ]
+      };
+    }
+
+    function NovaAIApp({ systemState, onToggleSetting, onOpenApp, launchCount }) {
+      const isDark = systemState.isDark;
+
+      const [chats, setChats] = usePersistentState('nova_ai_chats_v2', () => [createFreshNovaChat()]);
+      const [currentChatId, setCurrentChatId] = useState(() => chats[0]?.id || null);
+      const [drawerOpen, setDrawerOpen] = useState(false);
+      const [longPressedChatId, setLongPressedChatId] = useState(null);
+      const [input, setInput] = useState('');
+      const [isThinking, setIsThinking] = useState(false);
+      const [showKeyboard, setShowKeyboard] = useState(true);
+
+      const holdTimerRef = useRef(null);
+      const holdTriggeredRef = useRef(false);
+      const chatEndRef = useRef(null);
+      const mountedRef = useRef(false);
+
+      // Start a brand-new chat every time Nova AI launches/reopens
+      useEffect(() => {
+        if (!mountedRef.current) {
+          mountedRef.current = true;
+          return;
+        }
+        const fresh = createFreshNovaChat();
+        setChats(prev => [fresh, ...prev]);
+        setCurrentChatId(fresh.id);
+        setDrawerOpen(false);
+        setLongPressedChatId(null);
+      }, [launchCount]);
+
+      const activeChat = chats.find(c => c.id === currentChatId) || chats[0] || null;
+
+      useEffect(() => {
+        chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      }, [activeChat?.messages?.length, isThinking]);
+
+      const generateDemoResponse = (prompt) => {
+        const q = prompt.toLowerCase();
+        if (q.includes('light mode') || q.includes('dark mode') || q.includes('theme')) {
+          onToggleSetting('isDark');
+          return `Switched interface appearance to ${!isDark ? 'Dark' : 'Light'} Mode.`;
+        }
+        if (q.includes('wifi') || q.includes('wi-fi')) {
+          onToggleSetting('wifi');
+          return `Wi-Fi is now ${!systemState.wifi ? 'enabled' : 'disabled'}.`;
+        }
+        if (q.includes('battery') || q.includes('status')) {
+          return `Battery at ${systemState.battery}%, Brightness at ${systemState.brightness}%, Wi-Fi ${systemState.wifi ? 'On' : 'Off'}.`;
+        }
+        if (q.includes('weather')) {
+          return 'Current sample weather: 21°C and Partly Cloudy. Open Weather for the 5-day forecast.';
+        }
+        if (q.includes('open ')) {
+          const target = APPS_CONFIG.find(a => q.includes(a.name.toLowerCase()));
+          if (target && target.id !== 'nova-ai') {
+            setTimeout(() => onOpenApp(target.id), 600);
+            return `Opening ${target.name}...`;
+          }
+        }
+        return `[Demo Mode] Response to "${prompt}". Connect a Gemini API backend for live model responses.`;
+      };
+
+      const handleSend = () => {
+        const trimmed = input.trim();
+        if (!trimmed || isThinking) return;
+
+        const targetId = activeChat?.id;
+        if (!targetId) return;
+
+        const userMsg = { id: `${Date.now()}-u`, role: 'user', text: trimmed };
+
+        setChats(prev => prev.map(c => {
+          if (c.id !== targetId) return c;
+          const nextTitle = c.title === 'New Chat' ? trimmed.slice(0, 28) : c.title;
+          return { ...c, title: nextTitle, messages: [...c.messages, userMsg] };
+        }));
+
+        setInput('');
+        setIsThinking(true);
+
+        setTimeout(() => {
+          const replyText = generateDemoResponse(trimmed);
+          const aiMsg = { id: `${Date.now()}-a`, role: 'assistant', text: replyText };
+          setChats(prev => prev.map(c => c.id === targetId ? { ...c, messages: [...c.messages, aiMsg] } : c));
+          setIsThinking(false);
+        }, 700);
+      };
+
+      const handleDeleteChat = (chatId) => {
+        setLongPressedChatId(null);
+        setChats(prev => {
+          const remaining = prev.filter(c => c.id !== chatId);
+          if (remaining.length === 0) {
+            const replacement = createFreshNovaChat();
+            setCurrentChatId(replacement.id);
+            return [replacement];
+          }
+          if (currentChatId === chatId) {
+            setCurrentChatId(remaining[0].id);
+          }
+          return remaining;
+        });
+      };
+
+      const startChatHold = (chatId) => {
+        holdTriggeredRef.current = false;
+        holdTimerRef.current = setTimeout(() => {
+          holdTriggeredRef.current = true;
+          setLongPressedChatId(chatId);
+        }, 420);
+      };
+
+      const endChatHold = (chatId) => {
+        if (holdTimerRef.current) {
+          clearTimeout(holdTimerRef.current);
+          holdTimerRef.current = null;
+        }
+        if (!holdTriggeredRef.current && longPressedChatId !== chatId) {
+          setCurrentChatId(chatId);
+          setDrawerOpen(false);
+          setLongPressedChatId(null);
+        }
+      };
+
+      return h('div', {
+        className: `h-full w-full min-h-0 flex flex-col relative overflow-hidden transition-colors duration-200 ${
+          isDark ? 'bg-[#060911] text-white' : 'bg-[#F8FAFC] text-slate-900'
+        }`
+      },
+        // Subtle Blue Ambient Glow
+        h('div', {
+          className: `absolute -top-24 left-1/2 -translate-x-1/2 w-72 h-44 blur-[60px] pointer-events-none ${
+            isDark ? 'bg-blue-600/20' : 'bg-blue-400/20'
+          }`
+        }),
+
+        // Header
+        h('div', {
+          className: `px-4 pt-2 pb-2.5 flex items-center justify-between border-b z-10 shrink-0 ${
+            isDark ? 'border-blue-500/15 bg-[#060911]/85' : 'border-blue-200/80 bg-white/85'
+          }`
+        },
+          h('div', { className: 'flex items-center gap-2 min-w-0' },
+            h('button', {
+              type: 'button',
+              onClick: () => { setDrawerOpen(o => !o); setLongPressedChatId(null); },
+              title: 'Chat History',
+              className: `p-2 rounded-xl border transition-colors ${
+                isDark ? 'bg-white/5 border-white/10 hover:bg-white/10' : 'bg-slate-100 border-slate-200 hover:bg-slate-200'
+              }`
+            }, h(Lucide.Menu, { size: 15, className: 'text-blue-500' })),
+            h('div', { className: 'min-w-0' },
+              h('div', { className: 'flex items-center gap-1.5' },
+                h('span', { className: 'text-xs font-bold tracking-tight truncate' }, activeChat?.title || 'Nova AI'),
+                h('span', { className: 'text-[9px] px-1.5 py-0.5 rounded-full bg-blue-500/15 text-blue-500 border border-blue-500/25 font-mono shrink-0' }, 'DEMO')
+              ),
+              h('p', { className: 'text-[10px] opacity-55 truncate' }, 'Hold a chat in menu to delete')
+            )
+          ),
+          h('div', { className: 'flex items-center gap-1.5' },
+            h('button', {
+              type: 'button',
+              onClick: () => {
+                const fresh = createFreshNovaChat();
+                setChats(prev => [fresh, ...prev]);
+                setCurrentChatId(fresh.id);
+                setDrawerOpen(false);
+              },
+              title: 'New Chat',
+              className: 'p-2 rounded-xl bg-blue-600/15 border border-blue-500/30 text-blue-500 hover:bg-blue-600/25 transition-colors'
+            }, h(Lucide.SquarePen, { size: 14 })),
+            h('button', {
+              type: 'button',
+              onClick: () => setShowKeyboard(k => !k),
+              className: `p-2 rounded-xl border transition-colors ${
+                showKeyboard
+                  ? 'bg-blue-600 text-white border-blue-500'
+                  : (isDark ? 'bg-white/5 border-white/10 opacity-60' : 'bg-slate-100 border-slate-200 opacity-60')
+              }`
+            }, h(Lucide.Keyboard, { size: 14 }))
+          )
+        ),
+
+        // Chat History Drawer Overlay (Press & Hold to Delete)
+        h(AnimatePresence, null,
+          drawerOpen && h(motion.div, {
+            initial: { opacity: 0 },
+            animate: { opacity: 1 },
+            exit: { opacity: 0 },
+            onClick: () => { setDrawerOpen(false); setLongPressedChatId(null); },
+            className: 'absolute inset-0 top-12 bg-black/45 backdrop-blur-sm z-20 flex'
+          },
+            h(motion.div, {
+              initial: { x: '-100%' },
+              animate: { x: 0 },
+              exit: { x: '-100%' },
+              transition: SPRING_TRANSITION,
+              onClick: e => e.stopPropagation(),
+              className: `w-64 h-full border-r p-3 flex flex-col gap-2 overflow-y-auto no-scrollbar ${
+                isDark ? 'bg-[#0B101B] border-blue-500/20 text-white' : 'bg-white border-slate-200 text-slate-900'
+              }`
+            },
+              h('div', { className: 'text-[10px] font-semibold uppercase tracking-wider opacity-50 px-2 py-1' },
+                'Conversations (Press & Hold)'
+              ),
+              chats.map(c => {
+                const isSelected = c.id === activeChat?.id;
+                const showDelete = longPressedChatId === c.id;
+                return h('div', {
+                  key: c.id,
+                  onPointerDown: () => startChatHold(c.id),
+                  onPointerUp: () => endChatHold(c.id),
+                  onPointerCancel: () => { if (holdTimerRef.current) clearTimeout(holdTimerRef.current); },
+                  className: `p-2.5 rounded-xl border flex items-center justify-between gap-2 cursor-pointer transition-colors ${
+                    isSelected
+                      ? 'bg-blue-600/15 border-blue-500/40 text-blue-500'
+                      : (isDark ? 'bg-white/5 border-white/10 hover:bg-white/10' : 'bg-slate-50 border-slate-200 hover:bg-slate-100')
+                  }`
+                },
+                  h('div', { className: 'min-w-0 flex-1' },
+                    h('div', { className: 'text-xs font-semibold truncate' }, c.title),
+                    h('div', { className: 'text-[10px] opacity-50' }, `${c.messages.length} msgs • ${c.createdAt}`)
+                  ),
+                  showDelete && h('button', {
+                    type: 'button',
+                    onPointerDown: e => e.stopPropagation(),
+                    onPointerUp: e => { e.stopPropagation(); handleDeleteChat(c.id); },
+                    className: 'px-2.5 py-1 rounded-lg bg-rose-600 text-white text-[11px] font-semibold shrink-0 shadow'
+                  }, 'Delete')
+                );
+              })
+            )
+          )
+        ),
+
+        // Messages Feed
+        h('div', { className: 'flex-1 min-h-0 overflow-y-auto no-scrollbar px-4 py-3 space-y-2.5 z-10' },
+          (activeChat?.messages || []).map(msg =>
+            h(motion.div, {
+              key: msg.id,
+              initial: { opacity: 0, y: 8, scale: 0.97 },
+              animate: { opacity: 1, y: 0, scale: 1 },
+              transition: FAST_SPRING,
+              className: `flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`
+            },
+              h('div', {
+                className: `max-w-[82%] px-3.5 py-2 rounded-2xl text-[12.5px] leading-relaxed ${
+                  msg.role === 'user'
+                    ? 'bg-blue-600 text-white rounded-br-sm shadow-sm'
+                    : (isDark
+                        ? 'bg-[#101726] text-slate-200 border border-blue-500/20 rounded-bl-sm'
+                        : 'bg-white text-slate-800 border border-blue-200/80 shadow-2xs rounded-bl-sm')
+                }`
+              }, msg.text)
+            )
+          ),
+          isThinking && h('div', {
+            className: `flex items-center gap-1.5 px-3.5 py-2 rounded-2xl w-fit border ${
+              isDark ? 'bg-[#101726] border-blue-500/20' : 'bg-white border-blue-200'
+            }`
+          },
+            [0, 1, 2].map(i =>
+              h(motion.span, {
+                key: i,
+                animate: { opacity: [0.3, 1, 0.3], scale: [0.85, 1.15, 0.85] },
+                transition: { repeat: Infinity, duration: 1, delay: i * 0.2 },
+                className: 'w-1.5 h-1.5 rounded-full bg-blue-500'
+              })
+            )
+          ),
+          h('div', { ref: chatEndRef })
+        ),
+
+        // Input Row
+        h('div', { className: 'px-3 pb-2 pt-1 flex items-center gap-2 z-10 shrink-0' },
+          h('input', {
+            type: 'text',
+            value: input,
+            onFocus: () => setShowKeyboard(true),
+            onChange: e => setInput(e.target.value),
+            onKeyDown: e => e.key === 'Enter' && handleSend(),
+            placeholder: 'Message Nova AI...',
+            className: `flex-1 rounded-full px-3.5 py-2 text-xs border focus:outline-none focus:border-blue-500 ${
+              isDark
+                ? 'bg-[#0E1422] border-blue-500/30 text-white placeholder-slate-500'
+                : 'bg-white border-blue-300/80 text-slate-900 placeholder-slate-400'
+            }`
+          }),
+          h(motion.button, {
+            type: 'button',
+            whileTap: { scale: 0.9 },
+            onClick: handleSend,
+            className: 'w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center text-white shadow-sm shrink-0'
+          }, h(Lucide.ArrowUp, { size: 16 }))
+        ),
+
+        // Custom Keyboard
+        h(AnimatePresence, null,
+          showKeyboard && h(NovaVirtualKeyboard, {
+            isDark,
+            onKeyPress: ch => setInput(prev => prev + ch),
+            onBackspace: () => setInput(prev => prev.slice(0, -1)),
+            onSubmit: handleSend,
+            onHide: () => setShowKeyboard(false)
+          })
+        )
+      );
+    }
+
+    // =========================================================================
+    // 8. INDIVIDUAL APPLICATIONS (ALL LIGHT-MODE READY & KEYBOARD-INTEGRATED)
+    // =========================================================================
+
+    function SettingsApp({
+      systemState,
+      setSystemState,
+      customWallpapers,
+      onUploadWallpaper,
+      homeWallpaperId,
+      lockWallpaperId,
+      onApplyWallpaper
+    }) {
+      const [targetSurface, setTargetSurface] = useState('both');
+      const fileInputRef = useRef(null);
+      const isDark = systemState.isDark;
+
+      const toggle = (k) => setSystemState(s => ({ ...s, [k]: !s[k] }));
+      const cardClass = isDark ? 'bg-white/5 border-white/10' : 'bg-white border-slate-200 shadow-2xs';
+      const allWallpapers = [...customWallpapers, ...PRESET_WALLPAPERS];
+
+      const handleFileChange = (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = () => {
+          if (typeof reader.result === 'string') {
+            const id = `custom-${Date.now()}`;
+            const newWp = {
+              id,
+              name: file.name.replace(/\.[^/.]+$/, '') || 'Custom Image',
+              type: 'image',
+              value: reader.result,
+              accent: '#3B82F6'
+            };
+            onUploadWallpaper(newWp, targetSurface);
+          }
+        };
+        reader.readAsDataURL(file);
+        e.target.value = '';
+      };
+
+      const activeHomeWp = resolveWallpaper(homeWallpaperId, customWallpapers);
+      const activeLockWp = resolveWallpaper(lockWallpaperId, customWallpapers);
+
+      return h('div', { className: 'h-full overflow-y-auto no-scrollbar px-5 pt-2 pb-6 space-y-5' },
+        h('h1', { className: 'text-2xl font-bold tracking-tight' }, 'Settings'),
+
+        h('div', { className: `p-4 rounded-2xl border flex items-center gap-3.5 ${cardClass}` },
+          h('div', { className: 'w-12 h-12 rounded-2xl bg-gradient-to-br from-blue-500 to-indigo-700 flex items-center justify-center text-white font-bold text-lg shadow-md' }, 'N1'),
+          h('div', null,
+            h('div', { className: 'font-semibold text-sm' }, 'NovaPhone Pro'),
+            h('div', { className: 'text-xs opacity-60' }, 'NovaOS 2.4 • 256 GB Titanium')
+          )
+        ),
+
+        h('div', { className: 'space-y-2' },
+          h('div', { className: 'text-xs font-semibold uppercase tracking-wider opacity-50 px-1' }, 'Display & Wallpapers'),
+          h('div', { className: `p-3.5 rounded-2xl border space-y-4 ${cardClass}` },
+            h('div', { className: 'flex items-center justify-between' },
+              h('div', { className: 'flex items-center gap-2.5' },
+                h(Lucide.Moon, { size: 17, className: 'text-blue-500' }),
+                h('span', { className: 'text-sm font-medium' }, 'Dark Mode')
+              ),
+              h('button', {
+                onClick: () => toggle('isDark'),
+                className: `w-11 h-6 rounded-full p-0.5 transition-colors ${isDark ? 'bg-blue-600' : 'bg-slate-300'}`
+              },
+                h('div', { className: `w-5 h-5 rounded-full bg-white shadow transition-transform ${isDark ? 'translate-x-5' : 'translate-x-0'}` })
+              )
+            ),
+
+            h('div', { className: 'space-y-1.5' },
+              h('div', { className: 'flex justify-between text-xs opacity-70' },
+                h('span', null, 'Brightness'),
+                h('span', null, `${systemState.brightness}%`)
+              ),
+              h('input', {
+                type: 'range', min: 20, max: 100, value: systemState.brightness,
+                onChange: e => setSystemState(s => ({ ...s, brightness: Number(e.target.value) })),
+                className: 'w-full h-2 bg-blue-500/20 rounded-lg cursor-pointer accent-blue-500'
+              })
+            ),
+
+            h('div', { className: `space-y-2.5 pt-2 border-t ${isDark ? 'border-white/10' : 'border-slate-200'}` },
+              h('div', { className: 'flex items-center justify-between' },
+                h('span', { className: 'text-xs font-semibold opacity-80' }, 'Apply Selected To'),
+                h('div', { className: `flex gap-1 p-0.5 rounded-lg border ${isDark ? 'bg-black/25 border-white/10' : 'bg-slate-100 border-slate-200'}` },
+                  [
+                    { id: 'both', label: 'Both' },
+                    { id: 'home', label: 'Home' },
+                    { id: 'lock', label: 'Lock' }
+                  ].map(opt =>
+                    h('button', {
+                      key: opt.id,
+                      onClick: () => setTargetSurface(opt.id),
+                      className: `px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors ${
+                        targetSurface === opt.id ? 'bg-blue-600 text-white' : 'opacity-65 hover:opacity-100'
+                      }`
+                    }, opt.label)
+                  )
+                )
+              ),
+
+              h('div', { className: 'grid grid-cols-2 gap-2' },
+                h('div', { className: `p-2 rounded-xl border flex items-center gap-2 ${isDark ? 'bg-black/20 border-white/10' : 'bg-slate-50 border-slate-200'}` },
+                  h('div', { style: getWallpaperSurfaceStyle(activeHomeWp, isDark), className: 'w-7 h-10 rounded-md shrink-0 border border-black/10' }),
+                  h('div', { className: 'min-w-0' },
+                    h('div', { className: 'text-[10px] uppercase tracking-wider opacity-50' }, 'Home'),
+                    h('div', { className: 'text-[11px] font-medium truncate' }, activeHomeWp.name)
+                  )
+                ),
+                h('div', { className: `p-2 rounded-xl border flex items-center gap-2 ${isDark ? 'bg-black/20 border-white/10' : 'bg-slate-50 border-slate-200'}` },
+                  h('div', { style: getWallpaperSurfaceStyle(activeLockWp, isDark), className: 'w-7 h-10 rounded-md shrink-0 border border-black/10' }),
+                  h('div', { className: 'min-w-0' },
+                    h('div', { className: 'text-[10px] uppercase tracking-wider opacity-50' }, 'Lock'),
+                    h('div', { className: 'text-[11px] font-medium truncate' }, activeLockWp.name)
+                  )
+                )
+              ),
+
+              h('input', {
+                ref: fileInputRef,
+                type: 'file',
+                accept: 'image/*',
+                onChange: handleFileChange,
+                className: 'hidden'
+              }),
+              h('button', {
+                type: 'button',
+                onClick: () => fileInputRef.current?.click(),
+                className: 'w-full py-2.5 px-3 rounded-xl bg-blue-600/15 hover:bg-blue-600/25 border border-blue-500/35 text-blue-500 text-xs font-semibold flex items-center justify-center gap-2 transition-colors'
+              },
+                h(Lucide.Upload, { size: 14 }),
+                `Upload Image (${targetSurface === 'both' ? 'Home & Lock' : targetSurface === 'home' ? 'Home' : 'Lock'})`
+              ),
+
+              h('div', { className: 'grid grid-cols-4 gap-2 pt-1' },
+                allWallpapers.map(wp => {
+                  const isHome = homeWallpaperId === wp.id;
+                  const isLock = lockWallpaperId === wp.id;
+                  return h('button', {
+                    key: wp.id,
+                    type: 'button',
+                    onClick: () => onApplyWallpaper(wp.id, targetSurface),
+                    style: getWallpaperSurfaceStyle(wp, isDark),
+                    className: `h-16 rounded-xl border-2 relative overflow-hidden transition-all flex flex-col justify-end p-1 ${
+                      (isHome || isLock) ? 'border-blue-500 scale-[1.03]' : 'border-black/10 opacity-85 hover:opacity-100'
+                    }`
+                  },
+                    h('div', { className: 'flex gap-0.5 flex-wrap' },
+                      isHome && h('span', { className: 'text-[8px] font-bold px-1 rounded bg-blue-600 text-white' }, 'H'),
+                      isLock && h('span', { className: 'text-[8px] font-bold px-1 rounded bg-indigo-600 text-white' }, 'L')
+                    )
+                  );
+                })
+              )
+            )
+          )
+        ),
+
+        h('div', { className: 'space-y-2' },
+          h('div', { className: 'text-xs font-semibold uppercase tracking-wider opacity-50 px-1' }, 'System & Notifications'),
+          h('div', { className: `rounded-2xl border divide-y ${isDark ? 'divide-white/10' : 'divide-slate-200'} ${cardClass}` },
+            [
+              { key: 'wifi', label: 'Wi-Fi', sub: systemState.wifi ? 'NovaNet_5G' : 'Off', icon: Lucide.Wifi },
+              { key: 'bluetooth', label: 'Bluetooth', sub: systemState.bluetooth ? 'On' : 'Off', icon: Lucide.Bluetooth },
+              { key: 'dnd', label: 'Do Not Disturb', sub: systemState.dnd ? 'Silenced' : 'Off', icon: Lucide.BellOff },
+              { key: 'notificationsEnabled', label: 'Lock Screen Previews', sub: systemState.notificationsEnabled ? 'Enabled' : 'Hidden', icon: Lucide.Bell },
+            ].map(item =>
+              h('div', { key: item.key, className: 'p-3.5 flex items-center justify-between' },
+                h('div', { className: 'flex items-center gap-3' },
+                  h(item.icon, { size: 17, className: 'text-blue-500' }),
+                  h('div', null,
+                    h('div', { className: 'text-sm font-medium' }, item.label),
+                    h('div', { className: 'text-[11px] opacity-55' }, item.sub)
+                  )
+                ),
+                h('button', {
+                  onClick: () => toggle(item.key),
+                  className: `w-11 h-6 rounded-full p-0.5 transition-colors ${systemState[item.key] ? 'bg-blue-600' : 'bg-slate-400/40'}`
+                },
+                  h('div', { className: `w-5 h-5 rounded-full bg-white shadow transition-transform ${systemState[item.key] ? 'translate-x-5' : 'translate-x-0'}` })
+                )
+              )
+            )
+          )
+        ),
+
+        h('div', { className: `p-3.5 rounded-2xl border flex items-center justify-between ${cardClass}` },
+          h('div', { className: 'flex items-center gap-2.5' },
+            h(Lucide.BatteryCharging, { size: 18, className: 'text-emerald-500' }),
+            h('span', { className: 'text-sm font-medium' }, 'Battery Level')
+          ),
+          h('span', { className: 'text-sm font-semibold text-emerald-500' }, `${systemState.battery}% • Peak Performance`)
+        )
+      );
+    }
+
+    function CalculatorApp({ isDark }) {
+      const [display, setDisplay] = useState('0');
+      const [prevVal, setPrevVal] = useState(null);
+      const [op, setOp] = useState(null);
+      const [resetNext, setResetNext] = useState(false);
+
+      const handleNum = (n) => {
+        if (resetNext) { setDisplay(n); setResetNext(false); }
+        else setDisplay(display === '0' ? n : (display.length < 11 ? display + n : display));
+      };
+
+      const handleDot = () => {
+        if (resetNext) { setDisplay('0.'); setResetNext(false); return; }
+        if (!display.includes('.')) setDisplay(display + '.');
+      };
+
+      const compute = (a, b, operator) => {
+        switch (operator) {
+          case '+': return a + b;
+          case '-': return a - b;
+          case '×': return a * b;
+          case '÷': return b === 0 ? 'Error' : a / b;
+          default: return b;
+        }
+      };
+
+      const handleOp = (nextOp) => {
+        const current = parseFloat(display);
+        if (prevVal === null) setPrevVal(current);
+        else if (op) {
+          const result = compute(prevVal, current, op);
+          setDisplay(String(Number(result.toFixed(6))));
+          setPrevVal(result === 'Error' ? null : result);
+        }
+        setOp(nextOp);
+        setResetNext(true);
+      };
+
+      const handleEquals = () => {
+        if (op === null || prevVal === null) return;
+        const result = compute(prevVal, parseFloat(display), op);
+        setDisplay(result === 'Error' ? 'Error' : String(Number(result.toFixed(6))));
+        setPrevVal(null);
+        setOp(null);
+        setResetNext(true);
+      };
+
+      const clear = () => { setDisplay('0'); setPrevVal(null); setOp(null); setResetNext(false); };
+
+      const buttons = [
+        ['AC', '±', '%', '÷'],
+        ['7', '8', '9', '×'],
+        ['4', '5', '6', '-'],
+        ['1', '2', '3', '+'],
+        ['0', '.', '=']
+      ];
+
+      return h('div', { className: 'h-full flex flex-col justify-end px-4 pb-4' },
+        h('div', { className: 'flex-1 flex flex-col justify-end items-end pb-5 px-2' },
+          h('div', { className: 'text-xs opacity-50 h-5 font-mono' }, prevVal !== null ? `${prevVal} ${op || ''}` : ''),
+          h('div', { className: 'text-5xl font-light tracking-tight truncate max-w-full' }, display)
+        ),
+        h('div', { className: 'grid grid-cols-4 gap-2.5' },
+          buttons.flat().map(btn => {
+            const isOp = ['÷', '×', '-', '+', '='].includes(btn);
+            const isTop = ['AC', '±', '%'].includes(btn);
+            const isZero = btn === '0';
+            return h(motion.button, {
+              key: btn,
+              whileTap: { scale: 0.92 },
+              onClick: () => {
+                if (btn === 'AC') clear();
+                else if (btn === '±') setDisplay(String(parseFloat(display) * -1));
+                else if (btn === '%') setDisplay(String(parseFloat(display) / 100));
+                else if (btn === '.') handleDot();
+                else if (btn === '=') handleEquals();
+                else if (isOp) handleOp(btn);
+                else handleNum(btn);
+              },
+              className: `${isZero ? 'col-span-2 text-left pl-7' : 'aspect-square flex items-center justify-center'} rounded-full text-xl font-medium transition-colors ${
+                isOp ? 'bg-blue-600 text-white' :
+                isTop ? (isDark ? 'bg-slate-700 text-white' : 'bg-slate-200 text-slate-900') :
+                (isDark ? 'bg-white/10 text-white' : 'bg-white border border-slate-200 text-slate-900')
+              }`
+            }, btn);
+          })
+        )
+      );
+    }
+
+    function ClockApp({ isDark }) {
+      const [tab, setTab] = useState('world');
+      const [now, setNow] = useState(new Date());
+      const [swRunning, setSwRunning] = useState(false);
+      const [swMs, setSwMs] = useState(0);
+      const [timerSec, setTimerSec] = useState(180);
+      const [timerRunning, setTimerRunning] = useState(false);
+
+      useEffect(() => {
+        const id = setInterval(() => setNow(new Date()), 1000);
+        return () => clearInterval(id);
+      }, []);
+
+      useEffect(() => {
+        if (!swRunning) return;
+        const id = setInterval(() => setSwMs(m => m + 50), 50);
+        return () => clearInterval(id);
+      }, [swRunning]);
+
+      useEffect(() => {
+        if (!timerRunning) return;
+        const id = setInterval(() => {
+          setTimerSec(s => {
+            if (s <= 1) { setTimerRunning(false); return 0; }
+            return s - 1;
+          });
+        }, 1000);
+        return () => clearInterval(id);
+      }, [timerRunning]);
+
+      const cities = [
+        { name: 'San Francisco', tz: 'America/Los_Angeles' },
+        { name: 'New York', tz: 'America/New_York' },
+        { name: 'London', tz: 'Europe/London' },
+        { name: 'Tokyo', tz: 'Asia/Tokyo' }
+      ];
+
+      const fmtSw = (ms) => {
+        const mins = Math.floor(ms / 60000);
+        const secs = Math.floor((ms % 60000) / 1000);
+        const cs = Math.floor((ms % 1000) / 10);
+        return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}.${String(cs).padStart(2, '0')}`;
+      };
+
+      const fmtTimer = (s) => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+
+      return h('div', { className: 'h-full flex flex-col px-5 pt-2 pb-4' },
+        h('div', { className: 'flex gap-1 p-1 rounded-xl bg-blue-500/10 mb-5' },
+          ['world', 'stopwatch', 'timer'].map(t =>
+            h('button', {
+              key: t,
+              onClick: () => setTab(t),
+              className: `flex-1 py-1.5 rounded-lg text-xs font-semibold capitalize transition-all ${tab === t ? 'bg-blue-600 text-white shadow' : 'opacity-65'}`
+            }, t)
+          )
+        ),
+
+        tab === 'world' && h('div', { className: 'space-y-3 overflow-y-auto no-scrollbar' },
+          cities.map(c => {
+            const tStr = now.toLocaleTimeString([], { timeZone: c.tz, hour: '2-digit', minute: '2-digit' });
+            return h('div', { key: c.name, className: `p-4 rounded-2xl border flex items-center justify-between ${isDark ? 'bg-white/5 border-white/10' : 'bg-white border-slate-200 shadow-2xs'}` },
+              h('div', null,
+                h('div', { className: 'text-xs opacity-50' }, 'Today'),
+                h('div', { className: 'text-base font-semibold' }, c.name)
+              ),
+              h('div', { className: 'text-2xl font-light font-mono' }, tStr)
+            );
+          })
+        ),
+
+        tab === 'stopwatch' && h('div', { className: 'flex-1 flex flex-col items-center justify-center gap-8' },
+          h('div', { className: 'text-5xl font-mono font-light tracking-tight' }, fmtSw(swMs)),
+          h('div', { className: 'flex gap-4' },
+            h('button', {
+              onClick: () => setSwRunning(r => !r),
+              className: `w-20 h-20 rounded-full font-semibold text-sm text-white ${swRunning ? 'bg-rose-600' : 'bg-blue-600'}`
+            }, swRunning ? 'Stop' : 'Start'),
+            h('button', {
+              onClick: () => { setSwRunning(false); setSwMs(0); },
+              className: `w-20 h-20 rounded-full font-semibold text-sm ${isDark ? 'bg-white/10' : 'bg-slate-200'}`
+            }, 'Reset')
+          )
+        ),
+
+        tab === 'timer' && h('div', { className: 'flex-1 flex flex-col items-center justify-center gap-7' },
+          h('div', { className: 'text-5xl font-mono font-light' }, fmtTimer(timerSec)),
+          h('div', { className: 'flex gap-2' },
+            [60, 180, 300].map(sec =>
+              h('button', {
+                key: sec,
+                onClick: () => { setTimerRunning(false); setTimerSec(sec); },
+                className: 'px-3 py-1.5 rounded-full text-xs bg-blue-500/15 text-blue-500 font-medium'
+              }, `${sec / 60} min`)
+            )
+          ),
+          h('button', {
+            onClick: () => setTimerRunning(r => !r),
+            className: `px-8 py-3 rounded-full text-sm font-semibold text-white ${timerRunning ? 'bg-rose-600' : 'bg-blue-600'}`
+          }, timerRunning ? 'Pause' : 'Start Timer')
+        )
+      );
+    }
+
+    function CalendarApp({ isDark }) {
+      const [events, setEvents] = usePersistentState('calendar_events', {
+        '2026-11-23': ['NovaOS Design Review • 2:00 PM'],
+        '2026-11-26': ['Product Launch Sync • 10:30 AM']
+      });
+      const [viewDate, setViewDate] = useState(new Date());
+      const [selectedDay, setSelectedDay] = useState(new Date().getDate());
+      const [newEvent, setNewEvent] = useState('');
+      const [showKb, setShowKb] = useState(false);
+
+      const year = viewDate.getFullYear();
+      const month = viewDate.getMonth();
+      const daysInMonth = new Date(year, month + 1, 0).getDate();
+      const firstDay = new Date(year, month, 1).getDay();
+      const dateKey = `${year}-${String(month + 1).padStart(2, '0')}-${String(selectedDay).padStart(2, '0')}`;
+
+      const addEvent = () => {
+        if (!newEvent.trim()) return;
+        setEvents(prev => ({ ...prev, [dateKey]: [...(prev[dateKey] || []), newEvent.trim()] }));
+        setNewEvent('');
+      };
+
+      return h('div', { className: 'h-full flex flex-col overflow-hidden' },
+        h('div', { className: 'flex-1 min-h-0 overflow-y-auto no-scrollbar px-4 pt-2 pb-3 flex flex-col' },
+          h('div', { className: 'flex items-center justify-between mb-3' },
+            h('h2', { className: 'text-lg font-bold' }, viewDate.toLocaleDateString([], { month: 'long', year: 'numeric' })),
+            h('div', { className: 'flex gap-1' },
+              h('button', { onClick: () => setViewDate(new Date(year, month - 1, 1)), className: `p-1.5 rounded-lg ${isDark ? 'bg-white/5' : 'bg-slate-200/70'}` }, h(Lucide.ChevronLeft, { size: 16 })),
+              h('button', { onClick: () => setViewDate(new Date(year, month + 1, 1)), className: `p-1.5 rounded-lg ${isDark ? 'bg-white/5' : 'bg-slate-200/70'}` }, h(Lucide.ChevronRight, { size: 16 }))
+            )
+          ),
+          h('div', { className: 'grid grid-cols-7 text-center text-[11px] opacity-50 mb-1.5' },
+            ['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((d, i) => h('div', { key: i }, d))
+          ),
+          h('div', { className: 'grid grid-cols-7 gap-1 mb-3' },
+            Array.from({ length: firstDay }).map((_, i) => h('div', { key: `e-${i}` })),
+            Array.from({ length: daysInMonth }).map((_, idx) => {
+              const d = idx + 1;
+              const k = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+              const hasEv = (events[k] || []).length > 0;
+              const active = selectedDay === d;
+              return h('button', {
+                key: d,
+                onClick: () => setSelectedDay(d),
+                className: `h-8 rounded-xl text-xs font-medium flex flex-col items-center justify-center relative ${
+                  active ? 'bg-blue-600 text-white' : (isDark ? 'hover:bg-white/10' : 'hover:bg-slate-200/70')
+                }`
+              },
+                d,
+                hasEv && h('span', { className: `w-1 h-1 rounded-full mt-0.5 ${active ? 'bg-white' : 'bg-blue-500'}` })
+              );
+            })
+          ),
+          h('div', { className: `flex-1 p-3 rounded-2xl border flex flex-col min-h-[110px] ${isDark ? 'bg-white/5 border-white/10' : 'bg-white border-slate-200'}` },
+            h('div', { className: 'text-xs font-semibold opacity-60 mb-2' }, `Schedule • ${dateKey}`),
+            h('div', { className: 'flex-1 space-y-1.5 overflow-y-auto no-scrollbar mb-2' },
+              (events[dateKey] || []).length === 0
+                ? h('div', { className: 'text-xs opacity-40 py-3 text-center' }, 'No events scheduled')
+                : (events[dateKey] || []).map((ev, i) =>
+                  h('div', { key: i, className: 'px-3 py-1.5 rounded-xl bg-blue-500/15 border-l-2 border-blue-500 text-xs font-medium' }, ev)
+                )
+            ),
+            h('div', { className: 'flex gap-1.5' },
+              h('input', {
+                value: newEvent,
+                onFocus: () => setShowKb(true),
+                onChange: e => setNewEvent(e.target.value),
+                onKeyDown: e => e.key === 'Enter' && addEvent(),
+                placeholder: 'Add event...',
+                className: `flex-1 px-3 py-1.5 rounded-xl text-xs border focus:outline-none ${isDark ? 'bg-black/25 border-white/10' : 'bg-slate-50 border-slate-200'}`
+              }),
+              h('button', { onClick: addEvent, className: 'px-3 py-1.5 rounded-xl bg-blue-600 text-white text-xs font-semibold' }, 'Add')
+            )
+          )
+        ),
+        h(AnimatePresence, null,
+          showKb && h(NovaVirtualKeyboard, {
+            isDark,
+            onKeyPress: ch => setNewEvent(prev => prev + ch),
+            onBackspace: () => setNewEvent(prev => prev.slice(0, -1)),
+            onSubmit: addEvent,
+            onHide: () => setShowKb(false)
+          })
+        )
+      );
+    }
+
+    function NotesApp({ isDark }) {
+      const [notes, setNotes] = usePersistentState('notes', [
+        { id: '1', title: 'NovaOS Architecture', body: 'Fluid spring physics, unified translucent surfaces, and zero-clutter navigation.', updated: 'Just now' },
+        { id: '2', title: 'Groceries', body: 'Espresso beans, oat milk, sparkling water, blueberries.', updated: 'Yesterday' }
+      ]);
+      const [activeId, setActiveId] = useState(null);
+      const [focusedField, setFocusedField] = useState('body');
+      const [showKb, setShowKb] = useState(false);
+
+      const activeNote = notes.find(n => n.id === activeId);
+
+      const createNote = () => {
+        const n = { id: Date.now().toString(), title: 'Untitled Note', body: '', updated: 'Just now' };
+        setNotes([n, ...notes]);
+        setActiveId(n.id);
+        setShowKb(true);
+      };
+
+      const updateNote = (field, val) => {
+        setNotes(notes.map(n => n.id === activeId ? { ...n, [field]: val, updated: 'Edited now' } : n));
+      };
+
+      const deleteNote = (id) => {
+        setNotes(notes.filter(n => n.id !== id));
+        if (activeId === id) { setActiveId(null); setShowKb(false); }
+      };
+
+      if (activeNote) {
+        return h('div', { className: 'h-full flex flex-col overflow-hidden' },
+          h('div', { className: 'flex-1 min-h-0 flex flex-col px-5 pt-2 pb-2 overflow-hidden' },
+            h('div', { className: 'flex items-center justify-between mb-3 shrink-0' },
+              h('button', { onClick: () => { setActiveId(null); setShowKb(false); }, className: 'flex items-center gap-1 text-blue-500 text-sm font-medium' },
+                h(Lucide.ChevronLeft, { size: 18 }), 'Notes'
+              ),
+              h('div', { className: 'flex items-center gap-2' },
+                h('button', { onClick: () => setShowKb(k => !k), className: 'p-1.5 text-blue-500' }, h(Lucide.Keyboard, { size: 17 })),
+                h('button', { onClick: () => deleteNote(activeNote.id), className: 'text-rose-500 p-1.5' }, h(Lucide.Trash2, { size: 17 }))
+              )
+            ),
+            h('input', {
+              value: activeNote.title,
+              onFocus: () => { setFocusedField('title'); setShowKb(true); },
+              onChange: e => updateNote('title', e.target.value),
+              className: 'text-xl font-bold bg-transparent focus:outline-none mb-2 shrink-0'
+            }),
+            h('textarea', {
+              value: activeNote.body,
+              onFocus: () => { setFocusedField('body'); setShowKb(true); },
+              onChange: e => updateNote('body', e.target.value),
+              placeholder: 'Start writing...',
+              className: 'flex-1 bg-transparent resize-none text-sm leading-relaxed focus:outline-none opacity-85'
+            })
+          ),
+          h(AnimatePresence, null,
+            showKb && h(NovaVirtualKeyboard, {
+              isDark,
+              onKeyPress: ch => updateNote(focusedField, (activeNote[focusedField] || '') + ch),
+              onBackspace: () => updateNote(focusedField, (activeNote[focusedField] || '').slice(0, -1)),
+              onHide: () => setShowKb(false)
+            })
+          )
+        );
+      }
+
+      return h('div', { className: 'h-full flex flex-col px-5 pt-2 pb-4' },
+        h('div', { className: 'flex items-center justify-between mb-4' },
+          h('h1', { className: 'text-2xl font-bold' }, 'Notes'),
+          h('button', { onClick: createNote, className: 'w-8 h-8 rounded-full bg-blue-600 text-white flex items-center justify-center' }, h(Lucide.Plus, { size: 18 }))
+        ),
+        h('div', { className: 'flex-1 space-y-2.5 overflow-y-auto no-scrollbar' },
+          notes.map(n =>
+            h('div', {
+              key: n.id,
+              onClick: () => setActiveId(n.id),
+              className: `p-3.5 rounded-2xl border cursor-pointer transition-transform active:scale-[0.98] ${isDark ? 'bg-white/5 border-white/10' : 'bg-white border-slate-200 shadow-2xs'}`
+            },
+              h('div', { className: 'font-semibold text-sm mb-0.5' }, n.title || 'Untitled'),
+              h('div', { className: 'text-xs opacity-60 truncate' }, n.body || 'No additional text'),
+              h('div', { className: 'text-[10px] opacity-40 mt-1.5' }, n.updated)
+            )
+          )
+        )
+      );
+    }
+
+    function MessagesApp({ isDark }) {
+      const [threads, setThreads] = usePersistentState('messages', [
+        {
+          id: 'alex',
+          name: 'Alex Rivera',
+          avatar: 'AR',
+          msgs: [
+            { from: 'them', text: 'Hey! Have you tried the new NovaOS build yet?', time: '10:14 AM' },
+            { from: 'me', text: 'Running it right now. The light mode wallpapers look super crisp.', time: '10:16 AM' }
+          ]
+        },
+        {
+          id: 'maya',
+          name: 'Maya Lin',
+          avatar: 'ML',
+          msgs: [
+            { from: 'them', text: 'Coffee at 4pm near the studio?', time: 'Yesterday' }
+          ]
+        }
+      ]);
+      const [activeId, setActiveId] = useState(null);
+      const [draft, setDraft] = useState('');
+      const [showKb, setShowKb] = useState(false);
+
+      const activeThread = threads.find(t => t.id === activeId);
+
+      const sendMsg = () => {
+        if (!draft.trim()) return;
+        const text = draft.trim();
+        setDraft('');
+        setThreads(prev => prev.map(t => t.id === activeId ? {
+          ...t,
+          msgs: [...t.msgs, { from: 'me', text, time: 'Now' }]
+        } : t));
+
+        setTimeout(() => {
+          setThreads(prev => prev.map(t => t.id === activeId ? {
+            ...t,
+            msgs: [...t.msgs, { from: 'them', text: 'Got it! Sounds good to me.', time: 'Now' }]
+          } : t));
+        }, 900);
+      };
+
+      if (activeThread) {
+        return h('div', { className: 'h-full flex flex-col overflow-hidden' },
+          h('div', { className: 'flex-1 min-h-0 flex flex-col px-4 pt-2 pb-2 overflow-hidden' },
+            h('div', { className: `flex items-center gap-2.5 pb-2.5 border-b shrink-0 ${isDark ? 'border-white/10' : 'border-slate-200'}` },
+              h('button', { onClick: () => { setActiveId(null); setShowKb(false); }, className: 'text-blue-500' }, h(Lucide.ChevronLeft, { size: 22 })),
+              h('div', { className: 'w-8 h-8 rounded-full bg-blue-600/20 text-blue-500 font-semibold text-xs flex items-center justify-center' }, activeThread.avatar),
+              h('div', { className: 'font-semibold text-sm flex-1' }, activeThread.name),
+              h('button', { onClick: () => setShowKb(k => !k), className: 'p-1.5 text-blue-500' }, h(Lucide.Keyboard, { size: 16 }))
+            ),
+            h('div', { className: 'flex-1 py-3 space-y-2.5 overflow-y-auto no-scrollbar' },
+              activeThread.msgs.map((m, i) =>
+                h('div', { key: i, className: `flex ${m.from === 'me' ? 'justify-end' : 'justify-start'}` },
+                  h('div', {
+                    className: `max-w-[78%] px-3.5 py-2 rounded-2xl text-xs ${
+                      m.from === 'me' ? 'bg-blue-600 text-white rounded-br-sm' : (isDark ? 'bg-white/10' : 'bg-white border border-slate-200')
+                    }`
+                  }, m.text)
+                )
+              )
+            ),
+            h('div', { className: 'flex gap-2 pt-1 shrink-0' },
+              h('input', {
+                value: draft,
+                onFocus: () => setShowKb(true),
+                onChange: e => setDraft(e.target.value),
+                onKeyDown: e => e.key === 'Enter' && sendMsg(),
+                placeholder: 'Message...',
+                className: `flex-1 px-3.5 py-2 rounded-full text-xs border focus:outline-none ${isDark ? 'bg-white/5 border-white/15' : 'bg-white border-slate-300'}`
+              }),
+              h('button', { onClick: sendMsg, className: 'w-8 h-8 rounded-full bg-blue-600 text-white flex items-center justify-center' }, h(Lucide.ArrowUp, { size: 15 }))
+            )
+          ),
+          h(AnimatePresence, null,
+            showKb && h(NovaVirtualKeyboard, {
+              isDark,
+              onKeyPress: ch => setDraft(prev => prev + ch),
+              onBackspace: () => setDraft(prev => prev.slice(0, -1)),
+              onSubmit: sendMsg,
+              onHide: () => setShowKb(false)
+            })
+          )
+        );
+      }
+
+      return h('div', { className: 'h-full px-5 pt-2 pb-4 space-y-3' },
+        h('h1', { className: 'text-2xl font-bold' }, 'Messages'),
+        threads.map(t =>
+          h('div', {
+            key: t.id,
+            onClick: () => setActiveId(t.id),
+            className: `p-3.5 rounded-2xl border flex items-center gap-3 cursor-pointer ${isDark ? 'bg-white/5 border-white/10' : 'bg-white border-slate-200 shadow-2xs'}`
+          },
+            h('div', { className: 'w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 text-white font-semibold text-xs flex items-center justify-center' }, t.avatar),
+            h('div', { className: 'flex-1 min-w-0' },
+              h('div', { className: 'font-semibold text-sm' }, t.name),
+              h('div', { className: 'text-xs opacity-60 truncate' }, t.msgs[t.msgs.length - 1]?.text)
+            )
+          )
+        )
+      );
+    }
+
+    function PhoneApp({ isDark }) {
+      const [tab, setTab] = useState('keypad');
+      const [number, setNumber] = useState('');
+      const [calling, setCalling] = useState(null);
+      const [callSec, setCallSec] = useState(0);
+
+      useEffect(() => {
+        if (!calling) { setCallSec(0); return; }
+        const id = setInterval(() => setCallSec(s => s + 1), 1000);
+        return () => clearInterval(id);
+      }, [calling]);
+
+      const contacts = [
+        { name: 'Alex Rivera', num: '+1 (415) 890-2311' },
+        { name: 'Maya Lin', num: '+1 (650) 412-9904' },
+        { name: 'Nova Support', num: '1-800-NOVA-OS' }
+      ];
+
+      if (calling) {
+        return h('div', { className: 'h-full bg-gradient-to-b from-slate-900 to-black text-white flex flex-col items-center justify-between py-12 px-6' },
+          h('div', { className: 'text-center space-y-2' },
+            h('div', { className: 'w-20 h-20 rounded-full bg-blue-600/20 border border-blue-400/30 mx-auto flex items-center justify-center text-2xl font-bold text-blue-400' }, calling[0]),
+            h('h2', { className: 'text-2xl font-semibold' }, calling),
+            h('p', { className: 'text-sm text-blue-400 font-mono' }, callSec < 2 ? 'Calling...' : `00:${String(callSec - 2).padStart(2, '0')}`)
+          ),
+          h('button', {
+            onClick: () => setCalling(null),
+            className: 'w-16 h-16 rounded-full bg-rose-600 flex items-center justify-center shadow-lg shadow-rose-900/50'
+          }, h(Lucide.PhoneOff, { size: 26 }))
+        );
+      }
+
+      return h('div', { className: 'h-full flex flex-col px-5 pt-2 pb-4' },
+        tab === 'keypad' && h('div', { className: 'flex-1 flex flex-col justify-end pb-3' },
+          h('div', { className: 'h-12 text-center text-2xl font-mono tracking-wider mb-4' }, number || ' '),
+          h('div', { className: 'grid grid-cols-3 gap-3 max-w-[240px] mx-auto mb-5' },
+            ['1','2','3','4','5','6','7','8','9','*','0','#'].map(k =>
+              h(motion.button, {
+                key: k,
+                whileTap: { scale: 0.9 },
+                onClick: () => setNumber(n => n.length < 15 ? n + k : n),
+                className: `w-16 h-16 rounded-full text-xl font-medium flex items-center justify-center ${isDark ? 'bg-white/10' : 'bg-white border border-slate-200 shadow-2xs'}`
+              }, k)
+            )
+          ),
+          h('div', { className: 'flex items-center justify-center gap-6' },
+            h('button', {
+              onClick: () => number && setCalling(number),
+              className: 'w-16 h-16 rounded-full bg-emerald-500 text-white flex items-center justify-center shadow-lg'
+            }, h(Lucide.Phone, { size: 24 })),
+            number && h('button', {
+              onClick: () => setNumber(n => n.slice(0, -1)),
+              className: 'p-3 opacity-60'
+            }, h(Lucide.Delete, { size: 20 }))
+          )
+        ),
+
+        tab === 'contacts' && h('div', { className: 'flex-1 space-y-2.5 pt-2' },
+          h('h2', { className: 'text-xl font-bold mb-3' }, 'Contacts'),
+          contacts.map(c =>
+            h('div', {
+              key: c.name,
+              onClick: () => setCalling(c.name),
+              className: `p-3.5 rounded-2xl border flex items-center justify-between cursor-pointer ${isDark ? 'bg-white/5 border-white/10' : 'bg-white border-slate-200 shadow-2xs'}`
+            },
+              h('div', null,
+                h('div', { className: 'font-semibold text-sm' }, c.name),
+                h('div', { className: 'text-xs opacity-50' }, c.num)
+              ),
+              h(Lucide.Phone, { size: 16, className: 'text-emerald-500' })
+            )
+          )
+        ),
+
+        h('div', { className: `flex border-t pt-2 mt-2 ${isDark ? 'border-white/10' : 'border-slate-200'}` },
+          ['keypad', 'contacts'].map(t =>
+            h('button', {
+              key: t,
+              onClick: () => setTab(t),
+              className: `flex-1 py-1 text-xs font-semibold capitalize ${tab === t ? 'text-blue-500' : 'opacity-50'}`
+            }, t)
+          )
+        )
+      );
+    }
+
+    function CameraApp() {
+      const videoRef = useRef(null);
+      const [hasStream, setHasStream] = useState(false);
+      const [flash, setFlash] = useState(false);
+      const [mode, setMode] = useState('PHOTO');
+
+      useEffect(() => {
+        let activeStream = null;
+        if (navigator.mediaDevices?.getUserMedia) {
+          navigator.mediaDevices.getUserMedia({ video: true })
+            .then(stream => {
+              activeStream = stream;
+              if (videoRef.current) {
+                videoRef.current.srcObject = stream;
+                setHasStream(true);
+              }
+            })
+            .catch(() => setHasStream(false));
+        }
+        return () => activeStream?.getTracks().forEach(t => t.stop());
+      }, []);
+
+      const shutter = () => {
+        setFlash(true);
+        setTimeout(() => setFlash(false), 180);
+      };
+
+      return h('div', { className: 'h-full bg-black text-white flex flex-col justify-between relative overflow-hidden' },
+        flash && h('div', { className: 'absolute inset-0 bg-white z-30 pointer-events-none' }),
+        h('div', { className: 'flex-1 relative flex items-center justify-center overflow-hidden rounded-2xl mx-2 mt-1 bg-neutral-900' },
+          h('video', { ref: videoRef, autoPlay: true, playsInline: true, muted: true, className: `w-full h-full object-cover ${hasStream ? 'block' : 'hidden'}` }),
+          !hasStream && h('div', { className: 'w-full h-full bg-gradient-to-tr from-slate-900 via-blue-950/40 to-slate-800 flex flex-col items-center justify-center p-6 text-center' },
+            h(Lucide.Aperture, { size: 42, className: 'text-blue-400/70 mb-2 animate-spin', style: { animationDuration: '12s' } }),
+            h('span', { className: 'text-xs font-mono text-slate-400' }, 'OPTICAL SENSOR READY (SIMULATED VIEWFINDER)')
+          ),
+          h('div', { className: 'absolute inset-0 grid grid-cols-3 grid-rows-3 pointer-events-none' },
+            Array.from({ length: 9 }).map((_, i) => h('div', { key: i, className: 'border border-white/10' }))
+          )
+        ),
+        h('div', { className: 'py-5 flex flex-col items-center gap-4' },
+          h('div', { className: 'flex gap-5 text-[11px] font-semibold tracking-wider' },
+            ['PORTRAIT', 'PHOTO', 'VIDEO'].map(m =>
+              h('button', { key: m, onClick: () => setMode(m), className: mode === m ? 'text-blue-400' : 'text-white/50' }, m)
+            )
+          ),
+          h(motion.button, {
+            whileTap: { scale: 0.88 },
+            onClick: shutter,
+            className: 'w-16 h-16 rounded-full border-4 border-white p-1 flex items-center justify-center'
+          }, h('div', { className: 'w-full h-full rounded-full bg-white' }))
+        )
+      );
+    }
+
+    function PhotosApp() {
+      const items = [
+        { id: 1, title: 'Alpine Dusk', grad: 'from-indigo-900 via-blue-700 to-amber-500', date: 'Nov 21' },
+        { id: 2, title: 'Tokyo Rain', grad: 'from-slate-900 via-cyan-800 to-blue-500', date: 'Nov 19' },
+        { id: 3, title: 'Minimal Concrete', grad: 'from-zinc-700 via-stone-500 to-neutral-300', date: 'Nov 15' },
+        { id: 4, title: 'Cobalt Wave', grad: 'from-blue-950 via-blue-600 to-sky-300', date: 'Nov 12' },
+        { id: 5, title: 'Desert Horizon', grad: 'from-orange-800 via-amber-600 to-yellow-300', date: 'Nov 08' },
+        { id: 6, title: 'Nordic Fjord', grad: 'from-emerald-950 via-teal-700 to-cyan-400', date: 'Nov 02' },
+      ];
+      const [selected, setSelected] = useState(null);
+
+      if (selected) {
+        return h('div', { className: 'h-full bg-black text-white flex flex-col p-4' },
+          h('button', { onClick: () => setSelected(null), className: 'flex items-center gap-1 text-blue-400 text-sm mb-3' },
+            h(Lucide.ChevronLeft, { size: 18 }), 'Library'
+          ),
+          h('div', { className: `flex-1 rounded-2xl bg-gradient-to-br ${selected.grad} shadow-2xl` }),
+          h('div', { className: 'pt-3 flex justify-between items-center text-xs text-slate-400' },
+            h('span', { className: 'font-semibold text-white' }, selected.title),
+            h('span', null, selected.date)
+          )
+        );
+      }
+
+      return h('div', { className: 'h-full px-4 pt-2 pb-4 overflow-y-auto no-scrollbar' },
+        h('h1', { className: 'text-2xl font-bold mb-3' }, 'Photos'),
+        h('div', { className: 'grid grid-cols-2 gap-2.5' },
+          items.map(it =>
+            h(motion.div, {
+              key: it.id,
+              whileTap: { scale: 0.96 },
+              onClick: () => setSelected(it),
+              className: `aspect-square rounded-2xl bg-gradient-to-br ${it.grad} p-3 flex flex-col justify-end cursor-pointer shadow-md`
+            },
+              h('span', { className: 'text-xs font-semibold text-white drop-shadow' }, it.title)
+            )
+          )
+        )
+      );
+    }
+
+    function WeatherApp({ isDark }) {
+      const forecast = [
+        { day: 'Today', icon: Lucide.CloudSun, hi: 21, lo: 13 },
+        { day: 'Tue', icon: Lucide.Sun, hi: 24, lo: 14 },
+        { day: 'Wed', icon: Lucide.CloudRain, hi: 17, lo: 11 },
+        { day: 'Thu', icon: Lucide.Cloud, hi: 19, lo: 12 },
+        { day: 'Fri', icon: Lucide.Sun, hi: 23, lo: 14 }
+      ];
+
+      return h('div', {
+        className: `h-full px-5 pt-4 pb-6 flex flex-col justify-between overflow-y-auto no-scrollbar transition-colors ${
+          isDark
+            ? 'bg-gradient-to-b from-blue-700 to-slate-950 text-white'
+            : 'bg-gradient-to-b from-sky-200 via-blue-100 to-white text-slate-900'
+        }`
+      },
+        h('div', { className: 'text-center space-y-1 pt-2' },
+          h('div', { className: `inline-block px-2 py-0.5 rounded-full text-[10px] font-mono mb-1 ${isDark ? 'bg-white/15' : 'bg-blue-600/10 text-blue-700'}` }, 'SAMPLE TELEMETRY'),
+          h('h2', { className: 'text-2xl font-medium' }, 'San Francisco'),
+          h('div', { className: 'text-6xl font-extralight tracking-tighter' }, '21°'),
+          h('div', { className: 'text-sm opacity-80' }, 'Partly Cloudy • H:21° L:13°')
+        ),
+        h('div', {
+          className: `rounded-2xl p-4 space-y-3 border backdrop-blur-md ${
+            isDark ? 'bg-white/10 border-white/15' : 'bg-white/80 border-blue-200/80 shadow-2xs'
+          }`
+        },
+          h('div', { className: 'text-[11px] font-semibold uppercase tracking-wider opacity-65' }, '5-Day Forecast'),
+          forecast.map(f =>
+            h('div', { key: f.day, className: 'flex items-center justify-between text-sm' },
+              h('span', { className: 'w-14 font-medium' }, f.day),
+              h(f.icon, { size: 18, className: isDark ? 'text-blue-200' : 'text-blue-600' }),
+              h('div', { className: 'flex gap-3 font-mono text-xs' },
+                h('span', { className: 'opacity-55' }, `${f.lo}°`),
+                h('span', { className: 'font-semibold' }, `${f.hi}°`)
+              )
+            )
+          )
+        )
+      );
+    }
+
+    function MusicApp() {
+      const tracks = [
+        { title: 'Orbital Drift', artist: 'Nova Soundscapes', freq: 220 },
+        { title: 'Subsurface Blue', artist: 'Kiasmos Tribute', freq: 261.63 },
+        { title: 'Glass Horizon', artist: 'Ambient Works', freq: 196 }
+      ];
+      const [idx, setIdx] = useState(0);
+      const [playing, setPlaying] = useState(false);
+      const [progress, setProgress] = useState(34);
+      const audioCtxRef = useRef(null);
+      const oscRef = useRef(null);
+
+      useEffect(() => {
+        if (playing) {
+          try {
+            const Ctx = window.AudioContext || window.webkitAudioContext;
+            const ctx = new Ctx();
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.type = 'sine';
+            osc.frequency.value = tracks[idx].freq;
+            gain.gain.value = 0.04;
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.start();
+            audioCtxRef.current = ctx;
+            oscRef.current = osc;
+          } catch {}
+        } else {
+          oscRef.current?.stop();
+          audioCtxRef.current?.close();
+        }
+        return () => {
+          try { oscRef.current?.stop(); audioCtxRef.current?.close(); } catch {}
+        };
+      }, [playing, idx]);
+
+      useEffect(() => {
+        if (!playing) return;
+        const id = setInterval(() => setProgress(p => (p >= 100 ? 0 : p + 0.5)), 500);
+        return () => clearInterval(id);
+      }, [playing]);
+
+      const current = tracks[idx];
+
+      return h('div', { className: 'h-full flex flex-col justify-between px-6 pt-4 pb-6' },
+        h('div', { className: 'aspect-square w-full max-w-[230px] mx-auto rounded-3xl bg-gradient-to-br from-blue-600 via-indigo-700 to-slate-900 shadow-2xl flex items-center justify-center relative overflow-hidden' },
+          h(Lucide.Disc3, { size: 72, className: `text-white/80 ${playing ? 'animate-spin' : ''}`, style: { animationDuration: '6s' } })
+        ),
+        h('div', { className: 'text-center space-y-1' },
+          h('h2', { className: 'text-lg font-bold' }, current.title),
+          h('p', { className: 'text-xs opacity-60' }, current.artist)
+        ),
+        h('div', { className: 'space-y-2' },
+          h('div', { className: 'w-full h-1.5 bg-blue-500/20 rounded-full overflow-hidden' },
+            h('div', { style: { width: `${progress}%` }, className: 'h-full bg-blue-500 transition-all' })
+          )
+        ),
+        h('div', { className: 'flex items-center justify-center gap-7' },
+          h('button', { onClick: () => setIdx((idx - 1 + tracks.length) % tracks.length) }, h(Lucide.SkipBack, { size: 24 })),
+          h(motion.button, {
+            whileTap: { scale: 0.9 },
+            onClick: () => setPlaying(p => !p),
+            className: 'w-14 h-14 rounded-full bg-blue-600 text-white flex items-center justify-center shadow-lg'
+          }, playing ? h(Lucide.Pause, { size: 24 }) : h(Lucide.Play, { size: 24, className: 'ml-0.5' })),
+          h('button', { onClick: () => setIdx((idx + 1) % tracks.length) }, h(Lucide.SkipForward, { size: 24 }))
+        )
+      );
+    }
+
+    function FilesApp({ isDark }) {
+      const files = [
+        { name: 'NovaOS_Architecture.pdf', size: '2.4 MB', type: 'PDF Document', content: 'NovaOS System Architecture Specification v2.4 — Modular micro-kernel UI layer.' },
+        { name: 'Q4_Roadmap.md', size: '18 KB', type: 'Markdown', content: '# Q4 Milestones\n- Fluid gesture navigation\n- Neural Nova AI integration\n- Always-On Display optimization' },
+        { name: 'Wallpaper_Pack.zip', size: '48.2 MB', type: 'Archive', content: 'Compressed archive containing Dark & Light system wallpapers.' }
+      ];
+      const [preview, setPreview] = useState(null);
+
+      return h('div', { className: 'h-full px-5 pt-2 pb-4 flex flex-col' },
+        h('h1', { className: 'text-2xl font-bold mb-4' }, 'Files'),
+        preview ? h('div', { className: `flex-1 p-4 rounded-2xl border flex flex-col ${isDark ? 'bg-white/5 border-white/10' : 'bg-white border-slate-200'}` },
+          h('button', { onClick: () => setPreview(null), className: 'text-blue-500 text-xs font-semibold mb-3 flex items-center gap-1' }, h(Lucide.ChevronLeft, { size: 15 }), 'Back'),
+          h('div', { className: 'font-bold text-sm mb-1' }, preview.name),
+          h('div', { className: 'text-[11px] opacity-50 mb-4' }, `${preview.type} • ${preview.size}`),
+          h('div', { className: 'text-xs leading-relaxed font-mono opacity-80 whitespace-pre-wrap' }, preview.content)
+        ) : h('div', { className: 'space-y-2.5' },
+          files.map(f =>
+            h('div', {
+              key: f.name,
+              onClick: () => setPreview(f),
+              className: `p-3.5 rounded-2xl border flex items-center gap-3 cursor-pointer ${isDark ? 'bg-white/5 border-white/10' : 'bg-white border-slate-200 shadow-2xs'}`
+            },
+              h(Lucide.FileText, { size: 20, className: 'text-blue-500 shrink-0' }),
+              h('div', { className: 'min-w-0 flex-1' },
+                h('div', { className: 'text-sm font-medium truncate' }, f.name),
+                h('div', { className: 'text-[11px] opacity-50' }, f.size)
+              )
+            )
+          )
+        )
+      );
+    }
+
+    function BrowserApp({ isDark }) {
+      const [urlInput, setUrlInput] = useState('https://novaos.design');
+      const [activeSite, setActiveSite] = useState('novaos');
+      const [showKb, setShowKb] = useState(false);
+
+      const triggerNav = () => {
+        const lower = urlInput.toLowerCase();
+        if (lower.includes('news')) setActiveSite('news');
+        else if (lower.includes('docs')) setActiveSite('docs');
+        else setActiveSite('custom');
+        setShowKb(false);
+      };
+
+      const navigate = (e) => {
+        e.preventDefault();
+        triggerNav();
+      };
+
+      return h('div', { className: 'h-full flex flex-col overflow-hidden' },
+        h('div', { className: 'flex-1 min-h-0 flex flex-col px-3 pt-1 pb-2 overflow-hidden' },
+          h('form', { onSubmit: navigate, className: 'flex items-center gap-1.5 mb-2.5 shrink-0' },
+            h('div', { className: `flex-1 flex items-center gap-2 px-3 py-2 rounded-xl border text-xs ${isDark ? 'bg-white/5 border-white/15' : 'bg-white border-slate-300'}` },
+              h(Lucide.Lock, { size: 12, className: 'text-emerald-500 shrink-0' }),
+              h('input', {
+                value: urlInput,
+                onFocus: () => setShowKb(true),
+                onChange: e => setUrlInput(e.target.value),
+                className: 'w-full bg-transparent focus:outline-none'
+              })
+            ),
+            h('button', { type: 'button', onClick: () => setShowKb(k => !k), className: 'p-2 rounded-xl text-blue-500' }, h(Lucide.Keyboard, { size: 16 }))
+          ),
+          h('div', { className: `flex-1 rounded-2xl border p-4 overflow-y-auto no-scrollbar ${isDark ? 'bg-white/5 border-white/10' : 'bg-white border-slate-200'}` },
+            activeSite === 'novaos' && h('div', { className: 'space-y-3' },
+              h('span', { className: 'text-[10px] font-mono px-2 py-0.5 rounded bg-blue-500/15 text-blue-500' }, 'NOVA WEB ENGINE'),
+              h('h2', { className: 'text-xl font-bold' }, 'Welcome to NovaBrowser'),
+              h('p', { className: 'text-xs opacity-75 leading-relaxed' }, 'Sandboxed mobile web renderer supporting both Dark and Light themes.'),
+              h('div', { className: 'grid grid-cols-2 gap-2 pt-2' },
+                h('button', { onClick: () => { setUrlInput('https://docs.novaos.design'); setActiveSite('docs'); }, className: 'p-3 rounded-xl bg-blue-600/15 border border-blue-500/30 text-left text-xs font-semibold text-blue-500' }, 'NovaOS Docs →'),
+                h('button', { onClick: () => { setUrlInput('https://news.novaos.design'); setActiveSite('news'); }, className: 'p-3 rounded-xl bg-blue-600/15 border border-blue-500/30 text-left text-xs font-semibold text-blue-500' }, 'Tech Briefing →')
+              )
+            ),
+            activeSite === 'docs' && h('div', { className: 'space-y-2' },
+              h('h3', { className: 'font-bold text-base' }, 'NovaOS Gesture Documentation'),
+              h('p', { className: 'text-xs opacity-75 leading-relaxed' }, '• Single Tap Home Bar: Return Home\n• Double Tap Home Bar: Fresh Nova AI Chat\n• Press & Hold Home Bar: Multitasking Cards\n• Swipe Down Top Edge: Control Center')
+            ),
+            activeSite === 'news' && h('div', { className: 'space-y-2' },
+              h('h3', { className: 'font-bold text-base' }, 'Daily Tech Briefing'),
+              h('p', { className: 'text-xs opacity-75 leading-relaxed' }, 'Adaptive light and dark surfaces keep typography legible across every lighting environment.')
+            ),
+            activeSite === 'custom' && h('div', { className: 'text-center py-8 space-y-2' },
+              h(Lucide.Globe, { size: 32, className: 'mx-auto text-blue-500 opacity-80' }),
+              h('div', { className: 'text-sm font-semibold' }, urlInput),
+              h('p', { className: 'text-xs opacity-60' }, 'Simulated external page view.'),
+              h('button', { onClick: () => { setUrlInput('https://novaos.design'); setActiveSite('novaos'); }, className: 'px-3 py-1.5 rounded-lg bg-blue-600 text-white text-xs' }, 'Return to Start Page')
+            )
+          )
+        ),
+        h(AnimatePresence, null,
+          showKb && h(NovaVirtualKeyboard, {
+            isDark,
+            onKeyPress: ch => setUrlInput(prev => prev + ch),
+            onBackspace: () => setUrlInput(prev => prev.slice(0, -1)),
+            onSubmit: triggerNav,
+            onHide: () => setShowKb(false)
+          })
+        )
+      );
+    }
+
+    // =========================================================================
+    // 9. CONTROL CENTER OVERLAY
+    // =========================================================================
+    function ControlCenter({ open, onClose, systemState, setSystemState, onLockDevice, onOpenSettings }) {
+      const toggle = (k) => setSystemState(s => ({ ...s, [k]: !s[k] }));
+
+      return h(AnimatePresence, null,
+        open && h(motion.div, {
+          initial: { opacity: 0 },
+          animate: { opacity: 1 },
+          exit: { opacity: 0 },
+          onClick: onClose,
+          className: 'absolute inset-0 bg-black/50 backdrop-blur-xl z-50 flex flex-col justify-between p-5 pt-10'
+        },
+          h(motion.div, {
+            initial: { y: -40, opacity: 0, scale: 0.96 },
+            animate: { y: 0, opacity: 1, scale: 1 },
+            exit: { y: -30, opacity: 0, scale: 0.96 },
+            transition: SPRING_TRANSITION,
+            onClick: e => e.stopPropagation(),
+            className: 'space-y-3.5 text-white'
+          },
+            h('div', { className: 'flex items-center justify-between px-1' },
+              h('span', { className: 'text-xs font-semibold tracking-wider uppercase text-white/60' }, 'Control Center'),
+              h('div', { className: 'flex gap-2' },
+                h('button', {
+                  onClick: () => { onClose(); onOpenSettings(); },
+                  className: 'w-9 h-9 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center transition-colors'
+                }, h(Lucide.Settings, { size: 16 })),
+                h('button', {
+                  onClick: () => { onClose(); onLockDevice(); },
+                  title: 'Lock to Always-On Display',
+                  className: 'w-9 h-9 rounded-full bg-blue-600/80 hover:bg-blue-500 flex items-center justify-center transition-colors'
+                }, h(Lucide.Lock, { size: 16 }))
+              )
+            ),
+
+            h('div', { className: 'grid grid-cols-2 gap-3' },
+              [
+                { key: 'wifi', label: 'Wi-Fi', sub: systemState.wifi ? 'NovaNet_5G' : 'Off', icon: Lucide.Wifi, active: systemState.wifi },
+                { key: 'bluetooth', label: 'Bluetooth', sub: systemState.bluetooth ? 'Connected' : 'Off', icon: Lucide.Bluetooth, active: systemState.bluetooth },
+                { key: 'airplane', label: 'Airplane', sub: systemState.airplane ? 'On' : 'Off', icon: Lucide.Plane, active: systemState.airplane },
+                { key: 'dnd', label: 'Focus', sub: systemState.dnd ? 'Do Not Disturb' : 'Off', icon: Lucide.Moon, active: systemState.dnd },
+              ].map(tile =>
+                h(motion.button, {
+                  key: tile.key,
+                  whileTap: { scale: 0.95 },
+                  onClick: () => toggle(tile.key),
+                  className: `p-3.5 rounded-2xl flex items-center gap-3 text-left transition-colors border ${
+                    tile.active ? 'bg-blue-600 border-blue-400/50 text-white' : 'bg-white/10 border-white/10 text-white/80'
+                  }`
+                },
+                  h('div', { className: `w-9 h-9 rounded-full flex items-center justify-center ${tile.active ? 'bg-white/20' : 'bg-white/10'}` },
+                    h(tile.icon, { size: 17 })
+                  ),
+                  h('div', { className: 'min-w-0' },
+                    h('div', { className: 'text-xs font-semibold truncate' }, tile.label),
+                    h('div', { className: 'text-[10px] opacity-75 truncate' }, tile.sub)
+                  )
+                )
+              )
+            ),
+
+            h('div', { className: 'grid grid-cols-2 gap-3' },
+              h('div', { className: 'bg-white/10 border border-white/10 rounded-2xl p-3.5 space-y-2' },
+                h('div', { className: 'flex items-center justify-between text-xs' },
+                  h(Lucide.Sun, { size: 15, className: 'text-blue-400' }),
+                  h('span', { className: 'font-mono text-[11px]' }, `${systemState.brightness}%`)
+                ),
+                h('input', {
+                  type: 'range', min: 20, max: 100, value: systemState.brightness,
+                  onChange: e => setSystemState(s => ({ ...s, brightness: Number(e.target.value) })),
+                  className: 'w-full h-2 rounded-lg bg-white/20 accent-blue-500 cursor-pointer'
+                })
+              ),
+              h('div', { className: 'bg-white/10 border border-white/10 rounded-2xl p-3.5 space-y-2' },
+                h('div', { className: 'flex items-center justify-between text-xs' },
+                  h(Lucide.Volume2, { size: 15, className: 'text-blue-400' }),
+                  h('span', { className: 'font-mono text-[11px]' }, `${systemState.volume}%`)
+                ),
+                h('input', {
+                  type: 'range', min: 0, max: 100, value: systemState.volume,
+                  onChange: e => setSystemState(s => ({ ...s, volume: Number(e.target.value) })),
+                  className: 'w-full h-2 rounded-lg bg-white/20 accent-blue-500 cursor-pointer'
+                })
+              )
+            ),
+
+            h('div', { className: 'grid grid-cols-2 gap-3' },
+              h('button', {
+                onClick: () => toggle('isDark'),
+                className: 'p-3.5 rounded-2xl bg-white/10 border border-white/10 flex items-center gap-2.5 text-xs font-medium'
+              },
+                systemState.isDark ? h(Lucide.Moon, { size: 16, className: 'text-blue-400' }) : h(Lucide.Sun, { size: 16, className: 'text-amber-400' }),
+                systemState.isDark ? 'Dark Mode' : 'Light Mode'
+              ),
+              h('div', { className: 'p-3.5 rounded-2xl bg-white/10 border border-white/10 flex items-center justify-between text-xs' },
+                h('span', { className: 'opacity-70' }, 'Battery'),
+                h('span', { className: 'font-semibold text-emerald-400' }, `${systemState.battery}%`)
+              )
+            )
+          ),
+
+          h('div', { className: 'flex flex-col items-center gap-1 pb-2 text-white/50 text-[11px]' },
+            h(Lucide.ChevronUp, { size: 18 }),
+            h('span', null, 'Tap anywhere to close')
+          )
+        )
+      );
+    }
+
+    // =========================================================================
+    // 10. LOCK SCREEN & ALWAYS-ON DISPLAY (AOD)
+    // =========================================================================
+    function LockAndAOD({ powerState, onWakeToLock, onUnlock, timeStr, dateStr, battery, lockWallpaper, isDark, notificationsEnabled }) {
+      const lastTapRef = useRef(0);
+
+      const handleAodTap = () => {
+        const now = Date.now();
+        if (now - lastTapRef.current < 320) {
+          onWakeToLock();
+        }
+        lastTapRef.current = now;
+      };
+
+      if (powerState === 'aod') {
+        return h(motion.div, {
+          key: 'aod',
+          initial: { opacity: 0 },
+          animate: { opacity: 1 },
+          exit: { opacity: 0 },
+          onClick: handleAodTap,
+          className: 'absolute inset-0 bg-black text-neutral-500 z-40 flex flex-col items-center justify-between py-20 px-6 cursor-pointer select-none'
+        },
+          h('div', { className: 'text-center space-y-2 mt-8' },
+            h('div', { className: 'text-6xl font-extralight tracking-tight text-neutral-400' }, timeStr),
+            h('div', { className: 'text-xs tracking-wide text-neutral-600' }, dateStr),
+            notificationsEnabled && h('div', { className: 'pt-4 flex justify-center gap-3 text-neutral-600' },
+              h(Lucide.MessageSquare, { size: 14 }),
+              h(Lucide.Sparkles, { size: 14 })
+            )
+          ),
+          h('div', { className: 'text-center' },
+            h('div', { className: 'text-[11px] font-mono text-neutral-700' }, `${battery}%`)
+          )
+        );
+      }
+
+      if (powerState === 'locked') {
+        return h(motion.div, {
+          key: 'locked',
+          initial: { opacity: 0 },
+          animate: { opacity: 1 },
+          exit: { y: '-100%', opacity: 0 },
+          transition: SPRING_TRANSITION,
+          drag: 'y',
+          dragConstraints: { top: -250, bottom: 0 },
+          dragElastic: 0.2,
+          onDragEnd: (_, info) => {
+            if (info.offset.y < -80 || info.velocity.y < -300) {
+              onUnlock();
+            }
+          },
+          style: getWallpaperSurfaceStyle(lockWallpaper, isDark),
+          className: `absolute inset-0 z-40 flex flex-col justify-between pt-16 pb-6 px-5 select-none ${
+            isDark ? 'text-white' : 'text-slate-900'
+          }`
+        },
+          h('div', { className: 'text-center space-y-1' },
+            h(Lucide.Lock, { size: 14, className: 'mx-auto mb-2 opacity-75' }),
+            h('div', { className: 'text-[68px] leading-none font-extralight tracking-tight' }, timeStr),
+            h('div', { className: 'text-sm font-medium opacity-80' }, dateStr)
+          ),
+
+          notificationsEnabled && h('div', { className: 'space-y-2 my-auto max-h-[210px] overflow-hidden' },
+            [
+              { app: 'Nova AI', title: 'Neural Core Ready', body: 'Double-tap the home bar to open a new chat.' },
+              { app: 'Messages', title: 'Alex Rivera', body: 'The light mode wallpapers look super crisp.' }
+            ].map((n, idx) =>
+              h('div', {
+                key: idx,
+                className: `p-3.5 rounded-2xl backdrop-blur-xl border space-y-0.5 ${
+                  isDark ? 'bg-black/40 border-white/15 text-white' : 'bg-white/75 border-slate-200/80 text-slate-900'
+                }`
+              },
+                h('div', { className: 'flex justify-between text-[10px] font-semibold uppercase tracking-wider text-blue-500' },
+                  h('span', null, n.app),
+                  h('span', { className: 'opacity-50' }, 'now')
+                ),
+                h('div', { className: 'text-xs font-semibold' }, n.title),
+                h('div', { className: 'text-xs opacity-75 truncate' }, n.body)
+              )
+            )
+          ),
+
+          h('div', {
+            onClick: onUnlock,
+            className: 'flex flex-col items-center cursor-pointer pt-4'
+          },
+            h('div', { className: `w-28 h-1 rounded-full ${isDark ? 'bg-white/85' : 'bg-slate-900/75'}` })
+          )
+        );
+      }
+
+      return null;
+    }
+
+    // =========================================================================
+    // 11. MULTITASKING / RECENT APPS SWITCHER
+    // =========================================================================
+    function MultitaskingView({ openApps, onSelectApp, onCloseApp, onDismissSwitcher, isDark }) {
+      return h(motion.div, {
+        initial: { opacity: 0 },
+        animate: { opacity: 1 },
+        exit: { opacity: 0 },
+        onClick: onDismissSwitcher,
+        className: 'absolute inset-0 bg-black/65 backdrop-blur-xl z-30 flex flex-col justify-center px-5'
+      },
+        h('div', { className: 'text-center text-xs font-semibold uppercase tracking-widest text-white/65 mb-5' },
+          openApps.length > 0 ? 'Recent Applications' : 'No Recent Apps'
+        ),
+        openApps.length > 0 ? h('div', {
+          onClick: e => e.stopPropagation(),
+          className: 'flex gap-4 overflow-x-auto no-scrollbar py-4 px-2 snap-x'
+        },
+          openApps.map(appId => {
+            const app = APPS_CONFIG.find(a => a.id === appId);
+            if (!app) return null;
+            const IconComp = Lucide[app.icon] || Lucide.Box;
+            return h(motion.div, {
+              key: app.id,
+              layout: true,
+              initial: { scale: 0.85, opacity: 0 },
+              animate: { scale: 1, opacity: 1 },
+              exit: { scale: 0.7, opacity: 0, y: -40 },
+              transition: SPRING_TRANSITION,
+              onClick: () => onSelectApp(app.id),
+              className: `w-52 h-80 shrink-0 snap-center rounded-3xl border shadow-2xl flex flex-col justify-between p-4 cursor-pointer relative overflow-hidden ${
+                isDark ? 'bg-[#111726] border-white/15 text-white' : 'bg-white border-slate-200 text-slate-900'
+              }`
+            },
+              h('div', { className: 'flex items-center justify-between' },
+                h('div', { className: 'flex items-center gap-2' },
+                  h('div', { className: `w-7 h-7 rounded-lg bg-gradient-to-br ${app.bg} flex items-center justify-center` },
+                    h(IconComp, { size: 14, className: 'text-white' })
+                  ),
+                  h('span', { className: 'text-xs font-semibold' }, app.name)
+                ),
+                h('button', {
+                  onClick: (e) => { e.stopPropagation(); onCloseApp(app.id); },
+                  className: `w-6 h-6 rounded-full hover:bg-rose-500 hover:text-white flex items-center justify-center transition-colors ${isDark ? 'bg-white/10 text-white' : 'bg-slate-200 text-slate-700'}`
+                }, h(Lucide.X, { size: 13 }))
+              ),
+              h('div', { className: `flex-1 my-3 rounded-2xl border flex flex-col items-center justify-center gap-2 ${isDark ? 'bg-white/5 border-white/5' : 'bg-slate-100 border-slate-200'}` },
+                h(IconComp, { size: 36, className: 'text-blue-500/75' }),
+                h('span', { className: 'text-[11px] opacity-50' }, 'Tap to resume')
+              )
+            );
+          })
+        ) : h('div', { className: 'text-center text-xs text-white/45 py-12' }, 'Open any app and hold the home bar to switch tasks.')
+      );
+    }
+
+    // =========================================================================
+    // 12. MAIN NOVAOS KERNEL SHELL
+    // =========================================================================
+    function NovaOS() {
+      const prefersReducedMotion = useReducedMotion();
+
+      const [systemState, setSystemState] = usePersistentState('system_v3', {
+        isDark: true,
+        homeWallpaper: 'obsidian-horizon',
+        lockWallpaper: 'obsidian-horizon',
+        brightness: 95,
+        volume: 70,
+        wifi: true,
+        bluetooth: true,
+        airplane: false,
+        dnd: false,
+        notificationsEnabled: true,
+        battery: 88
+      });
+
+      const [customWallpapers, setCustomWallpapers] = useState([]);
+      const [unlockAnimKey, setUnlockAnimKey] = useState(0);
+      const [novaLaunchCount, setNovaLaunchCount] = useState(0);
+
+      // 'unlocked' | 'locked' | 'aod'
+      const [powerState, setPowerState] = useState('unlocked');
+      const [activeApp, setActiveApp] = useState(null);
+      const [openApps, setOpenApps] = useState(['nova-ai', 'weather']);
+      const [controlCenterOpen, setControlCenterOpen] = useState(false);
+      const [multitaskingOpen, setMultitaskingOpen] = useState(false);
+      const [now, setNow] = useState(new Date());
+
+      useEffect(() => {
+        const timer = setInterval(() => setNow(new Date()), 1000);
+        return () => clearInterval(timer);
+      }, []);
+
+      useEffect(() => {
+        document.documentElement.classList.toggle('dark', systemState.isDark);
+      }, [systemState.isDark]);
+
+      const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+      const dateStr = now.toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' });
+      const isDark = systemState.isDark;
+
+      const homeWallpaper = resolveWallpaper(systemState.homeWallpaper, customWallpapers);
+      const lockWallpaper = resolveWallpaper(systemState.lockWallpaper, customWallpapers);
+
+      const handleApplyWallpaper = (wpId, surface) => {
+        setSystemState(prev => ({
+          ...prev,
+          homeWallpaper: (surface === 'home' || surface === 'both') ? wpId : prev.homeWallpaper,
+          lockWallpaper: (surface === 'lock' || surface === 'both') ? wpId : prev.lockWallpaper
+        }));
+      };
+
+      const handleUploadWallpaper = (newWp, surface) => {
+        setCustomWallpapers(prev => [newWp, ...prev]);
+        handleApplyWallpaper(newWp.id, surface);
+      };
+
+      const handleUnlock = useCallback(() => {
+        setPowerState('unlocked');
+        setUnlockAnimKey(k => k + 1);
+      }, []);
+
+      const openApp = useCallback((appId) => {
+        setMultitaskingOpen(false);
+        setControlCenterOpen(false);
+        setActiveApp(appId);
+        setOpenApps(prev => [appId, ...prev.filter(id => id !== appId)]);
+        if (appId === 'nova-ai') {
+          setNovaLaunchCount(c => c + 1);
+        }
+      }, []);
+
+      const closeAppToHome = useCallback(() => {
+        if (multitaskingOpen) { setMultitaskingOpen(false); return; }
+        if (controlCenterOpen) { setControlCenterOpen(false); return; }
+        setActiveApp(null);
+      }, [multitaskingOpen, controlCenterOpen]);
+
+      const closeRecentApp = (appId) => {
+        setOpenApps(prev => prev.filter(id => id !== appId));
+        if (activeApp === appId) setActiveApp(null);
+      };
+
+      const renderActiveApp = () => {
+        const props = {
+          isDark,
+          systemState,
+          setSystemState,
+          customWallpapers,
+          onUploadWallpaper: handleUploadWallpaper,
+          homeWallpaperId: systemState.homeWallpaper,
+          lockWallpaperId: systemState.lockWallpaper,
+          onApplyWallpaper: handleApplyWallpaper,
+          onToggleSetting: k => setSystemState(s => ({ ...s, [k]: !s[k] })),
+          onOpenApp: openApp,
+          launchCount: novaLaunchCount
+        };
+        switch (activeApp) {
+          case 'nova-ai': return h(NovaAIApp, props);
+          case 'settings': return h(SettingsApp, props);
+          case 'calculator': return h(CalculatorApp, props);
+          case 'clock': return h(ClockApp, props);
+          case 'calendar': return h(CalendarApp, props);
+          case 'notes': return h(NotesApp, props);
+          case 'messages': return h(MessagesApp, props);
+          case 'phone': return h(PhoneApp, props);
+          case 'camera': return h(CameraApp, props);
+          case 'photos': return h(PhotosApp, props);
+          case 'weather': return h(WeatherApp, props);
+          case 'music': return h(MusicApp, props);
+          case 'files': return h(FilesApp, props);
+          case 'browser': return h(BrowserApp, props);
+          default: return null;
+        }
+      };
+
+      const gridApps = APPS_CONFIG.filter(a => !a.dock);
+      const dockApps = APPS_CONFIG.filter(a => a.dock);
+
+      return h('div', {
+        className: 'w-full h-full min-h-[100dvh] bg-[#05070B] flex items-center justify-center md:p-6 overflow-hidden'
+      },
+        h(ErrorBoundary, { onReset: () => setActiveApp(null) },
+          h('div', {
+            style: {
+              ...getWallpaperSurfaceStyle(homeWallpaper, isDark),
+              filter: `brightness(${0.35 + (systemState.brightness / 100) * 0.65})`
+            },
+            className: 'relative w-full h-[100dvh] md:w-[392px] md:h-[832px] md:max-h-[92vh] md:rounded-[48px] md:border-[8px] md:border-[#1B2230] md:shadow-[0_30px_90px_rgba(0,0,0,0.85),0_0_0_1px_rgba(255,255,255,0.08)] overflow-hidden flex flex-col justify-between transition-all duration-300'
+          },
+
+            powerState === 'unlocked' && h('div', {
+              onClick: () => setControlCenterOpen(true),
+              className: 'absolute top-0 inset-x-0 h-9 z-40 cursor-pointer'
+            }),
+
+            h(StatusBar, {
+              timeStr,
+              battery: systemState.battery,
+              isDark,
+              powerState,
+              onOpenControlCenter: () => setControlCenterOpen(true)
+            }),
+
+            // HOME SCREEN LAYER WITH SAMSUNG-STYLE ZOOM-OUT UNLOCK
+            h(motion.div, {
+              key: `home-${unlockAnimKey}`,
+              initial: prefersReducedMotion ? false : { scale: 1.13, opacity: 0.65 },
+              animate: {
+                scale: activeApp ? 0.94 : 1,
+                opacity: activeApp ? 0.4 : 1
+              },
+              transition: prefersReducedMotion ? { duration: 0 } : SAMSUNG_UNLOCK_SPRING,
+              className: 'flex-1 min-h-0 flex flex-col justify-between px-5 pt-4 pb-2 z-10 overflow-hidden origin-center'
+            },
+              h('div', {
+                className: `pt-2 pb-4 px-1 ${isDark ? 'text-white' : 'text-slate-900'}`
+              },
+                h('div', { className: 'text-[54px] leading-none font-extralight tracking-tight' }, timeStr),
+                h('div', { className: 'text-sm font-medium opacity-80 mt-1.5 flex items-center gap-2' },
+                  h('span', null, dateStr),
+                  h('span', { className: 'opacity-45' }, '•'),
+                  h('span', { className: isDark ? 'text-blue-300' : 'text-blue-600 font-semibold' }, '21°C')
+                )
+              ),
+
+              h(motion.div, {
+                animate: { scale: activeApp ? 0.92 : 1, opacity: activeApp ? 0 : 1 },
+                transition: prefersReducedMotion ? { duration: 0 } : SPRING_TRANSITION,
+                className: 'grid grid-cols-4 gap-y-5 gap-x-2 my-auto'
+              },
+                gridApps.map(app => h(AppIcon, { key: app.id, app, onOpen: openApp, isDark }))
+              ),
+
+              h(motion.div, {
+                animate: { y: activeApp ? 40 : 0, opacity: activeApp ? 0 : 1 },
+                transition: prefersReducedMotion ? { duration: 0 } : SPRING_TRANSITION,
+                className: `mt-3 px-3 py-3 rounded-[28px] backdrop-blur-2xl border flex items-center justify-around shadow-xl ${
+                  isDark ? 'bg-black/25 border-white/15' : 'bg-white/60 border-white/70'
+                }`
+              },
+                dockApps.map(app => h(AppIcon, { key: app.id, app, onOpen: openApp, showLabel: false, isDark }))
+              )
+            ),
+
+            // ACTIVE APPLICATION WINDOW LAYER
+            h(AnimatePresence, null,
+              activeApp && h(motion.div, {
+                key: activeApp,
+                initial: { opacity: 0, scale: 0.88, y: 30, borderRadius: '36px' },
+                animate: { opacity: 1, scale: 1, y: 0, borderRadius: '0px' },
+                exit: { opacity: 0, scale: 0.88, y: 30, borderRadius: '36px' },
+                transition: prefersReducedMotion ? { duration: 0.1 } : SPRING_TRANSITION,
+                className: `absolute inset-0 pt-9 pb-9 z-20 flex flex-col min-h-0 overflow-hidden ${
+                  activeApp === 'camera'
+                    ? 'bg-black text-white'
+                    : (isDark ? 'bg-[#0B0F17] text-white' : 'bg-[#F8FAFC] text-slate-900')
+                }`
+              },
+                h(ErrorBoundary, { onReset: () => setActiveApp(null) },
+                  renderActiveApp()
+                )
+              )
+            ),
+
+            // MULTITASKING SWITCHER
+            h(AnimatePresence, null,
+              multitaskingOpen && h(MultitaskingView, {
+                openApps,
+                onSelectApp: openApp,
+                onCloseApp: closeRecentApp,
+                onDismissSwitcher: () => setMultitaskingOpen(false),
+                isDark
+              })
+            ),
+
+            // CONTROL CENTER
+            h(ControlCenter, {
+              open: controlCenterOpen,
+              onClose: () => setControlCenterOpen(false),
+              systemState,
+              setSystemState,
+              onLockDevice: () => {
+                setActiveApp(null);
+                setMultitaskingOpen(false);
+                setPowerState('aod');
+              },
+              onOpenSettings: () => openApp('settings')
+            }),
+
+            // LOCK SCREEN & ALWAYS-ON DISPLAY
+            h(AnimatePresence, null,
+              powerState !== 'unlocked' && h(LockAndAOD, {
+                powerState,
+                onWakeToLock: () => setPowerState('locked'),
+                onUnlock: handleUnlock,
+                timeStr,
+                dateStr,
+                battery: systemState.battery,
+                lockWallpaper,
+                isDark,
+                notificationsEnabled: systemState.notificationsEnabled
+              })
+            ),
+
+            // HOME BAR
+            powerState === 'unlocked' && h(HomeBar, {
+              activeApp,
+              isDark,
+              onSingleTap: closeAppToHome,
+              onDoubleTap: () => openApp('nova-ai'),
+              onLongPress: () => setMultitaskingOpen(m => !m)
+            })
+          )
+        )
+      );
+    }
+
+    createRoot(document.getElementById('root')).render(h(NovaOS));
+  </script>
+</body>
+</html>
